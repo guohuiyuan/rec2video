@@ -3,7 +3,7 @@
 """BGM：从 go-music-dl 的服务接口按关键词找曲子并下载。
 
     python bgm.py search "upbeat technology" --json
-    python bgm.py get 12345 assets/bgm.mp3
+    python bgm.py get 12345 assets/bgm.mp3 --source netease
 
 配乐能力来自 [go-music-dl](https://github.com/guohuiyuan/go-music-dl)（不在本仓库里，
 本脚本只是它的 HTTP 客户端）。先起服务：
@@ -22,6 +22,7 @@ import html
 import json
 import os
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -67,12 +68,29 @@ def score(row: dict, want: float = 0.0) -> float:
     return s
 
 
-def download(base: str, song_id: str, out: Path) -> Path:
-    url = f"{base}/download?id={urllib.parse.quote(str(song_id))}&stream=1"
+def download(base: str, song_id: str, out: Path, source: str = "netease") -> Path:
+    """下载单曲。music-dl 的 /download 是 `id` + `source` 两个参数都要的：
+    只给 id 会直接 400 Missing params（老版本少了 source，一直下不下来）。
+    stream=1 让它把音频直接吐回来，不走「存到下载目录 / 传 WebDAV」那条路。
+    """
+    q = urllib.parse.urlencode({"id": song_id, "source": source, "stream": "1"})
+    url = f"{base}/download?{q}"
     req = urllib.request.Request(url, headers=UA)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(req, timeout=180) as r:
-        data = r.read()
+    try:
+        with urllib.request.urlopen(req, timeout=180) as r:
+            data = r.read()
+            ctype = r.headers.get("Content-Type", "")
+    except urllib.error.HTTPError as exc:
+        body = exc.read()[:200].decode("utf-8", "replace").strip()
+        hint = ""
+        if exc.code == 400:
+            hint = "（/download 需要 id + source，source 空或不对就会 400）"
+        elif exc.code == 502:
+            hint = "（这个源没拿到直链：换一首，或换 source）"
+        raise SystemExit(f"[!] 下载失败 {exc.code}{hint}：{body}") from None
+    if ctype and not ctype.startswith(("audio/", "application/octet-stream", "binary/")):
+        raise SystemExit(f"[!] 返回的不是音频（Content-Type: {ctype}）：{data[:200]!r}")
     if len(data) < 20000:
         raise SystemExit(f"[!] 下载到的内容太小（{len(data)} 字节），可能不是音频")
     out.write_bytes(data)
@@ -92,10 +110,11 @@ def main() -> None:
     g = sub.add_parser("get", help="按 id 下载")
     g.add_argument("id")
     g.add_argument("out", type=Path)
+    g.add_argument("--source", default="netease", help="曲子的来源（search 结果里的 source 字段）")
     a = ap.parse_args()
 
     if a.cmd == "get":
-        download(a.base, a.id, a.out)
+        download(a.base, a.id, a.out, a.source)
         return
 
     all_rows: list[dict] = []
@@ -114,7 +133,8 @@ def main() -> None:
             print(f"\n===== {kw} =====  {len(rows)} 条")
             for r in sorted(rows, key=score, reverse=True)[: a.limit]:
                 m, s2 = divmod(r["dur"], 60)
-                print(f"  {str(r['id']):<12} {m}:{s2:02d}  {r['name'][:36]:<36} | {r['artist'][:20]}")
+                print(f"  {str(r['id']):<12} {m}:{s2:02d}  {r['name'][:36]:<36} | "
+                      f"{r['artist'][:20]:<20} [{r.get('source') or '?'}]")
     if a.json:
         all_rows.sort(key=lambda r: r["score"], reverse=True)
         print(json.dumps({"base": a.base, "rows": all_rows}, ensure_ascii=False, indent=2))

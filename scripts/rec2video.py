@@ -402,8 +402,8 @@ def cmd_bgm(a) -> None:
                 "    b) 起 go-music-dl 再自动挑：music-dl web --no-browser -p 8080\n"
                 "       然后设 MUSIC_BASE=http://127.0.0.1:8080/music（或 --base）")
         if a.pick:
-            tool("bgm.py", "get", a.pick, mp3)
-            via = f"音乐站 id={a.pick}"
+            tool("bgm.py", "get", a.pick, mp3, "--source", a.source)
+            via = f"音乐站 id={a.pick} [{a.source}]"
         else:
             keys = a.q or ["upbeat technology", "lofi study", "chill background"]
             out = tool("bgm.py", "search", *keys, "--json", capture=True)
@@ -412,8 +412,9 @@ def cmd_bgm(a) -> None:
                 die("音乐站没搜到合适的：换关键词，或 --file 用自己的曲子")
             best = max(rows, key=lambda r: r.get("score", 0) + (6 if r["dur"] >= want else 0))
             m, s = divmod(best["dur"], 60)
-            say(f"[i] 选中 {best['name']} — {best['artist']}  {m}:{s:02d}  id={best['id']}")
-            tool("bgm.py", "get", best["id"], mp3)
+            say(f"[i] 选中 {best['name']} — {best['artist']}  {m}:{s:02d}  "
+                f"id={best['id']} source={best.get('source') or 'netease'}")
+            tool("bgm.py", "get", best["id"], mp3, "--source", best.get("source") or "netease")
             via = f"音乐站 {best['name'][:20]}"
 
     proj["bgm"]["src"] = "assets/bgm.mp3"
@@ -583,6 +584,8 @@ def main() -> None:
     b.add_argument("project")
     b.add_argument("-q", "--q", nargs="+", help="音乐站搜索关键词（需 MUSIC_BASE）")
     b.add_argument("--pick", help="直接指定音乐站 id")
+    b.add_argument("--source", default="netease",
+                   help="配合 --pick：曲子的来源（search 结果里的 source 字段）")
     b.add_argument("--file", help="用本地曲子（最省事）")
     b.add_argument("--off", action="store_true", help="关掉 BGM")
     b.add_argument("--volume", type=float, default=0.26)

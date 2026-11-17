@@ -52,7 +52,7 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | `plan <project>` | 按旁白时长生成取材骨架 `plan.json` |
 | `cut <project>` | 按 `plan.json` 反剪画面 + 换算推镜点 |
 | `key <lat_tk_xxx>` | 把配音 key 交给 latent-media 保存（转调它的 `keys` 命令） |
-| `bgm <project> [--file 曲子] [-q 关键词] [--pick id] [--off]` | 给你自己的曲子，或从 go-music-dl 搜一段（需 `MUSIC_BASE`） |
+| `bgm <project> [--file 曲子] [-q 关键词] [--pick id] [--source 源] [--off]` | 给你自己的曲子，或从 go-music-dl 搜一段（需 `MUSIC_BASE`，指到 `…/music`） |
 | `build <project> [--preview N] [--force] [--bgm auto\|off]` | 配音 →（有 plan 就反剪）→ 配乐 → 渲染 |
 | `check <project>` | 交付前自检：stretch、锚点、推镜间距、标版 |
 | `cover <project> [--repo URL] [--sizes 16x9,4x3]` | 抓仓库信息出封面 PNG |
@@ -157,5 +157,7 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | 渲染 `x264 malloc failed` | 内存不够，切片已加 `-threads 2`；降低输出分辨率 |
 | 中文变方块 | 系统缺 `Microsoft YaHei`；换 `subtitle.font` |
 | 音乐站连不上 | `--file` 用自己的曲子，或 `--bgm off` 干声出片 |
+| 取 BGM 报 `400 Missing params` | `MUSIC_BASE` 指向 `<host>/music`；单曲下载必须带 `source`（`bgm.py get <id> <out> --source netease`），编排器会自动从搜索结果里带 |
+| 取 BGM 报 `502` / `未知音源` | 那首歌的直链拿不到或源不支持，换一首或换 `--source`（网易云 `netease`、QQ `qq`、酷狗 `kugou`、酷我 `kuwo`） |
 
 深坑清单：`references/lessons.md`（坐标系、反剪顺序、字幕几何）；字幕细节：`references/subtitles.md`；滤镜实现：`references/pipeline.md`；录制参数：`references/capture.md`。
