@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
@@ -213,6 +214,16 @@ def cmd_plan(a) -> None:
         print(f"    {s.get('sub', '')[:30]:<32} 需 {r['max'] - 1.5:.2f}s")
 
 
+def _cut_key(at: float, want: float, vf: str, fps) -> str:
+    """切片缓存键：取材点 / 时长 / 裁切 / 帧率任一变化都算新切片。
+
+    只按文件名判断会复用「长度已经不对」的旧切片 —— 改完文案重跑 cut，
+    报告说 58s，实际拼的还是 62s 的旧片子，成片 stretch 直接偏 6%。
+    """
+    raw = f"{at:.3f}|{want:.3f}|{vf}|{fps}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:8]
+
+
 def cmd_cut(a) -> None:
     plan_p = Path(a.plan).resolve()
     plan = load_json(plan_p)
@@ -262,7 +273,7 @@ def cmd_cut(a) -> None:
             warns.append(f"s{i:02d} 取材越界 {at:.2f}→{b:.2f}s，源只有 {info['duration']:.2f}s")
             b = info["duration"]
             want = b - at
-        out = cuts / f"s{i:02d}.mp4"
+        out = cuts / f"s{i:02d}_{_cut_key(at, want, vf, fps)}.mp4"
         if not out.is_file() or a.force:
             p = run(["ffmpeg", "-hide_banner", "-v", "error", "-y",
                      "-ss", f"{at}", "-to", f"{b}", "-i", str(src), "-an",
@@ -276,6 +287,9 @@ def cmd_cut(a) -> None:
 
     lst = cuts / "list.txt"
     lst.write_text("".join(f"file '{p.name}'\n" for p in parts), encoding="utf-8")
+    for stale in cuts.glob("s[0-9][0-9]*.mp4"):     # 清掉上一版留下的切片
+        if stale not in parts:
+            stale.unlink()
     final = base / "assets" / "screen-edit.mp4"
     final.parent.mkdir(parents=True, exist_ok=True)
     # concat demuxer 不认 Windows 绝对路径的冒号 → 相对名 + cwd

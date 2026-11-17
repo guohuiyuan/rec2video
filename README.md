@@ -43,7 +43,7 @@ python scripts/rec2video.py new ~/Videos/demo.mp4 \
 python scripts/rec2video.py build demo/project.json      # 出片
 ```
 
-中间只差一件事：**文案**。写 `narration.txt`（一行一段，8–12 行 / 60–80 秒）后 `script` 灌进去，agent 会自动做这一步。
+中间只差一件事：**文案**。写 `narration.txt`（先定标题，第一段就是标题的口语版；一行一段，8–12 行 / 60–80 秒）后 `script` 灌进去，agent 会自动做这一步。
 
 ```bash
 python scripts/rec2video.py script demo/project.json narration.txt
@@ -73,13 +73,31 @@ OBS、Recordly、`Win+Alt+R`、`⇧⌘5` 都能用，参数与取舍见 [`refere
 ## 两种模式
 
 - **≤150s 直出**：整段画面按旁白总长对齐，适合一次录好的 60–90 秒演示。
-- **>150s 精剪**：`plan` 生成骨架 → 从联系表填取材点和推镜点 → `cut` 按旁白反剪。3 分钟的录屏挑 70 秒，比反复 NG 重录快。
+- **>150s 精剪**：`plan` 生成骨架 → 从联系表填取材点和推镜点 → `cut` 按旁白反剪。3 分钟的录屏挑 70 秒，比反复 NG 重录快。改完文案重新 `tts` 之后要再 `cut` 一遍，画面长度才跟得上新旁白。
 
 精剪的真实案例（12 段 / 77.5s / 13 个推镜）在 [`examples/recordly-intro/`](examples/recordly-intro/)。
 
+## 文案：先定标题，第一句复述标题
+
+观众是被标题带进来的，前三秒只干一件事：**让他确认「我点对了」，并且立刻知道这是什么。** 所以顺序是——先定标题，再把标题翻成口语当第一段，最后往下写正文。手上没有标题原句就别动笔，否则第一段只能靠痛点铺垫，开头必软。
+
+```
+✗ [笑] 想下一首歌，得来回切四五个网站，这事以前只能忍着。
+✓ [笑] 一个搜索框，搜遍 14 个音乐源——开源项目 go-music-dl。
+```
+
+- 0–1s：标题里的核心词**原样照搬**（标题写「14 个音乐源」，口播别说「十几个平台」）
+- 1–2s：项目名 + 一句定性（干什么的 / 开源 / 什么语言）
+- 2–3s：一个具体数字或一个反常识
+- 情绪指信息密度和短句节奏，不是感叹号；`太强了`/`绝了`/`炸裂` 这类空感叹删掉，信息不会少
+
+第一段配的画面必须是最完整的全貌，不能落在加载中、弹窗、滚动半路。情绪只放头和尾，中间老老实实讲功能。
+
+六个可直接套的开场模板、情绪词能／不能清单、五条自检 → [`references/hook.md`](references/hook.md)
+
 ## 字幕
 
-字幕**不手打时间码**：一条字幕 = 一段旁白，时间是配音实测时长（`work/timeline.json`）→ 尾部 +0.3s。改文案重跑 `build` 就自动重算。
+字幕**不手打时间码**：一条字幕 = 一段旁白，时间是配音实测时长（`work/timeline.json`）→ 尾部 +0.3s。改文案就跑 `script` → `tts` → `cut` → `build`：配音按「文本+音色」指纹自动重做，切片按新时长重切（切片名带时长指纹，不会拿旧切片凑数），字幕跟着重算。
 
 ```bash
 python scripts/rec2video.py subs demo/project.json     # 只重出字幕，改字号/文案后秒验
@@ -144,7 +162,7 @@ scripts/bgm.py            # go-music-dl 的 HTTP 客户端（找 / 下 BGM）
 scripts/musicdl.py        # 本地 music-dl 二进制：找 / 下载 release / 起停服务
 scripts/cover.py          # HTML 模板 + 浏览器截图出封面
 assets/templates/         # 封面模板（横版 repo-page / 竖版 hero）
-references/               # capture 录制 · subtitles 字幕 · lessons 深坑 · pipeline 滤镜实现
+references/               # hook 开场 · capture 录制 · subtitles 字幕 · lessons 深坑 · pipeline 滤镜实现
 examples/recordly-intro/  # 12 段精剪实例：project.json / plan.json / narration.txt
 ```
 

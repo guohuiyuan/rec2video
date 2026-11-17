@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -92,15 +93,38 @@ def latent_cli() -> str:
         "    或设 LATENT_CLI=/path/to/latent.py")
 
 
+def tts_sig(segs: list[dict], voice: str) -> str:
+    """配音缓存的指纹：文案文本 + 音色。文案一改就必须重配，否则声画错位。"""
+    h = hashlib.sha1()
+    h.update(voice.encode("utf-8"))
+    for s in segs:
+        h.update(b"\x00")
+        h.update(str(s.get("tts", "")).encode("utf-8"))
+    return h.hexdigest()
+
+
 def tts_batch(pr: "Project", voice: str, segs: list[dict], force: bool) -> None:
     """一段一句，交给 latent.py 批量合成（--text-file + --split-lines）。"""
     files = [pr.vo / f"seg{i:02d}.mp3" for i in range(1, len(segs) + 1)]
-    if not force and all(f.is_file() for f in files):
-        print(f"[=] 复用 {len(files)} 段配音（--force 可重做）")
+    sig_p = pr.vo / "manifest.json"
+    sig = tts_sig(segs, voice)
+    prev = {}
+    if sig_p.is_file():
+        try:
+            prev = json.loads(sig_p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prev = {}
+    stale = prev.get("sig") != sig
+    if not force and not stale and all(f.is_file() for f in files):
+        print(f"[=] 复用 {len(files)} 段配音（文案没变；--force 可重做）")
         return
+    if stale and not force and any(f.is_file() for f in files):
+        print("[i] 文案或音色变了 → 重新配音（旧音频会被覆盖）")
     cli = latent_cli()
     txt = pr.work / "tts-input.txt"
     txt.write_text("\n".join(s["tts"] for s in segs), encoding="utf-8")
+    for old in pr.vo.glob("seg-*.mp3"):          # 清掉上次中断留下的半成品
+        old.unlink()
     print(f"[>] 配音 {len(segs)} 段 ← latent-media ({Path(cli).name}, voice={voice})")
     cmd = [sys.executable, cli, "tts", "--voice", voice, "--text-file", str(txt),
            "--split-lines", "-o", str(pr.vo) + os.sep, "--name", "seg", "--json"]
@@ -112,6 +136,11 @@ def tts_batch(pr: "Project", voice: str, segs: list[dict], force: bool) -> None:
         raise SystemExit(f"[!] 期望 {len(segs)} 段，实际拿到 {len(produced)} 段：{pr.vo}")
     for src, dst in zip(produced, files):        # seg-01.mp3 → seg01.mp3
         src.replace(dst)
+    for extra in pr.vo.glob("seg[0-9][0-9].mp3"):  # 段数变少时清掉多出来的
+        if extra not in files:
+            extra.unlink()
+    sig_p.write_text(json.dumps({"sig": sig, "voice": voice, "segments": len(segs)},
+                                ensure_ascii=False), encoding="utf-8")
 
 
 # ════════════════════════════════════════════════════════════ 工程目录

@@ -77,3 +77,35 @@ frame_x = (src_x - crop_x) * frame_w / crop_w
 1. **下载单曲必须带 `source`。** `music-dl` 的 `/music/download` 是 `id` + `source` 双参数，缺一个直接 `400 Missing params`；搜索能出结果不代表能下。`bgm.py` 现在从搜索结果里把 `source` 带过去，手工下也要记得加：`get <id> <out> --source netease`。
 2. **`MUSIC_BASE` 要指到 `…/music`。** `music-dl web -p 8080` 的服务根路径是 `/music`，少这一段会拿到 404 的 HTML。
 3. **不要假设用户先起了服务。** 没服务时脚本会下官方 release 的可执行文件、起一个只听 `127.0.0.1` 的临时实例，用完关掉——但它要下 ~13 MB，走代理可能只有十几 KB/s，所以要并发分片 + 整轮重试。离线场景用 `--no-local` 直说不行，别在那儿干等。
+
+## 九、改文案是「重配 + 重切 + 重渲」，不是只重渲
+
+改一句文案会同时动两样东西：**旁白时长**、**每段画面该多长**。原来两处缓存都只看「文件在不在」，于是静默复用旧产物：
+
+| 缓存 | 症状 | 现在的做法 |
+|---|---|---|
+| `vo/segNN.mp3` | 文案换了，`tts` 照样打印「复用 10 段配音」，声音还是旧的，字幕和画面对不上 | `vo/manifest.json` 记文案+音色的 sha1，指纹不符就重配，并打印「文案变了 → 重新配音」 |
+| `work/cuts/sNN.mp4` | `cut` 报告「画面 58s」，实际拼进去的还是 62s 的旧切片，`check` 报 `stretch 0.94` | 切片名带参数指纹 `s01_<md5(at|want|crop|fps)>.mp4`，参数一变自然重切，旧切片顺手清掉 |
+
+所以改文案的标准动作就三条，不要省：
+
+```bash
+python scripts/rec2video.py script demo/project.json narration.txt   # 灌文案
+python scripts/rec2video.py tts    demo/project.json                 # 指纹变了会自动重配
+python scripts/rec2video.py cut    demo/project.json                 # 按时长重切（不放心就 --force）
+python scripts/rec2video.py build  demo/project.json
+```
+
+两个附加事实：
+
+- **同一段文案两次 TTS 时长可能差 3–4 秒**（语速有随机性）。所以别手动把 `max` 卡死在旧时长上，留 0.5–1.0s 余量；`cut` 会按新的 `dur + gap` 重新算。
+- `build` 只会在 `plan.json` 齐全**且** `video.src` 还不指向 `screen-edit.mp4` 时自动 cut。已经 cut 过一遍的工程，改完文案必须手动跑 `cut`，否则 `build` 用旧画面配新旁白。
+
+## 十、开场素材：先确认前几秒是「稳的」
+
+用户录屏时经常先拖窗口、缩放页面，开头 0–5 秒画面尺寸在变。这种段直接当第一段，成片第一帧就是「页面偏小、四周一片背景」，三秒内就掉人。
+
+做法：抽原片 `1–10s` 逐秒帧（`fps=1/1.0:start_time=1`），找出**页面尺寸不再变化**的那一秒，`at` 从这里起。本次实测原片 0–5s 窗口在缩放，5.2s 之后才稳。
+
+但别为了稳定把第一段推到和后面重复的位置——三段画面一模一样，观众会以为卡了。稳定点和「画面有推进」之间要取平衡：宁可第一段短一点（5s 左右），也不要 7 秒都停在同一屏。
+
