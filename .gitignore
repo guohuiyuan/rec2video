@@ -6,6 +6,7 @@ keys.env
 # 测试产物
 .tmp-test/
 .tmp/
+.tmp-cover/
 
 # Python
 __pycache__/

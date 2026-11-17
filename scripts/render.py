@@ -24,12 +24,10 @@ import json
 import math
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
-import time
-import urllib.error
-import urllib.request
 import wave
 import zlib
 from pathlib import Path
@@ -37,7 +35,6 @@ from pathlib import Path
 FFMPEG = os.environ.get("FFMPEG", "ffmpeg")
 FFPROBE = os.environ.get("FFPROBE", "ffprobe")
 ROOT = Path(__file__).resolve().parent.parent      # 仓库根（keys.env / assets 在这层）
-AUDIO_BASE = "https://audio.latent.moe"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/141.0 Safari/537.36"
 SR = 48000
 
@@ -81,27 +78,40 @@ def decode_pcm(path: Path) -> bytes:
     return res.stdout
 
 
-def read_key(proj: dict) -> str:
-    v = proj.get("voice") or {}
-    if not isinstance(v, dict):
-        v = {}
-    if v.get("key"):
-        return v["key"]
-    if os.environ.get("LATENT_AUDIO_KEY"):
-        return os.environ["LATENT_AUDIO_KEY"]
+def latent_cli() -> str:
+    """配音是外部的 latent-media 在做，这里只负责调它的 CLI（不重复实现 TTS）。"""
     home = Path.home()
-    candidates = [v.get("key_file")] if v.get("key_file") else []
-    # 依次找：仓库根 keys.env → ~/.config/rec2video/keys.env
-    candidates += [str(ROOT / "keys.env"), str(home / ".config" / "rec2video" / "keys.env")]
-    for kf in candidates:
-        p = Path(os.path.expanduser(str(kf)))
-        if p.is_file():
-            for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
-                if line.strip().startswith("LATENT_AUDIO_KEY"):
-                    return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise SystemExit("[!] 找不到配音 key：跑 `python scripts/rec2video.py key lat_tk_xxx` 存一把，"
-                     "或设环境变量 LATENT_AUDIO_KEY（key 在 audio.latent.moe 站点后台生成）")
+    for c in (os.environ.get("LATENT_CLI"),
+              str(home / ".workbuddy" / "skills" / "latent-media" / "scripts" / "latent.py"),
+              shutil.which("latent.py"), shutil.which("latent")):
+        if c and Path(str(c)).is_file():
+            return str(c)
+    raise SystemExit(
+        "[!] 找不到 latent-media 的 CLI（配音靠它做，本仓库不内置 TTS）。\n"
+        "    装：git clone https://github.com/guohuiyuan/latent-media ~/.workbuddy/skills/latent-media\n"
+        "    或设 LATENT_CLI=/path/to/latent.py")
 
+
+def tts_batch(pr: "Project", voice: str, segs: list[dict], force: bool) -> None:
+    """一段一句，交给 latent.py 批量合成（--text-file + --split-lines）。"""
+    files = [pr.vo / f"seg{i:02d}.mp3" for i in range(1, len(segs) + 1)]
+    if not force and all(f.is_file() for f in files):
+        print(f"[=] 复用 {len(files)} 段配音（--force 可重做）")
+        return
+    cli = latent_cli()
+    txt = pr.work / "tts-input.txt"
+    txt.write_text("\n".join(s["tts"] for s in segs), encoding="utf-8")
+    print(f"[>] 配音 {len(segs)} 段 ← latent-media ({Path(cli).name}, voice={voice})")
+    cmd = [sys.executable, cli, "tts", "--voice", voice, "--text-file", str(txt),
+           "--split-lines", "-o", str(pr.vo) + os.sep, "--name", "seg", "--json"]
+    res = sh(cmd, check=False)
+    if res.returncode != 0:
+        raise SystemExit(f"[!] latent.py tts 失败\n{(res.stderr or res.stdout or '')[-1500:]}")
+    produced = sorted(pr.vo.glob("seg-*.mp3"))
+    if len(produced) != len(segs):
+        raise SystemExit(f"[!] 期望 {len(segs)} 段，实际拿到 {len(produced)} 段：{pr.vo}")
+    for src, dst in zip(produced, files):        # seg-01.mp3 → seg01.mp3
+        src.replace(dst)
 
 
 # ════════════════════════════════════════════════════════════ 工程目录
@@ -152,38 +162,7 @@ class Project:
         return tl["total"] if tl else 0.0
 
 
-# ════════════════════════════════════════════════════════════ 1. 配音
-def tts_request(text: str, voice: str, key: str, timeout: int = 240) -> bytes:
-    payload = {"model": "latent-audio", "voice": voice, "input": text}
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    hdr = {"Authorization": f"Bearer {key}", "Content-Type": "application/json",
-           "User-Agent": UA, "Idempotency-Key": f"ghiv-{int(time.time())}-{abs(hash(text)) % 99991}"}
-    req = urllib.request.Request(f"{AUDIO_BASE}/v1/audio/speech", data=body, headers=hdr, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            return r.read()
-    except urllib.error.HTTPError as e:
-        raw = e.read()
-        if e.code != 504:
-            raise SystemExit(f"[!] TTS 失败 {e.code}: {raw[:300]!r}")
-        # 504：响应里带 job_id，去 /api/jobs/{id}/audio 领取，不重复扣额度
-        m = re.search(rb'"?(?:job_id|jobId|id)"?\s*:\s*"?([0-9a-fA-F-]{8,})', raw)
-        if not m:
-            raise SystemExit("[!] TTS 超时且响应里没有 job_id，无法续取")
-        jid = m.group(1).decode()
-        for _ in range(40):
-            time.sleep(3)
-            jr = urllib.request.Request(f"{AUDIO_BASE}/api/jobs/{jid}/audio",
-                                        headers={"Authorization": f"Bearer {key}", "User-Agent": UA})
-            try:
-                with urllib.request.urlopen(jr, timeout=180) as r:
-                    return r.read()
-            except urllib.error.HTTPError as e2:
-                if e2.code not in (404, 409, 425, 202):
-                    raise
-        raise SystemExit(f"[!] 任务 {jid} 迟迟没出音频，稍后用 latent.py job {jid} 取")
-
-
+# ════════════════════════════════════════════════════════════ 1. 配音（交给 latent-media）
 def stage_tts(pr: Project, force: bool = False) -> dict:
     prov = pr.get("voice", "provider", default="latent")
     gap = float(pr.get("voice", "gap", default=0.32))
@@ -198,7 +177,8 @@ def stage_tts(pr: Project, force: bool = False) -> dict:
         return pr.timeline or {}
 
     voice = pr.get("voice", "voice", default="voice-120")
-    key = read_key(pr) if prov == "latent" else ""
+    if prov == "latent":
+        tts_batch(pr, voice, segs, force)
 
     pcm = bytearray()
     silence = b"\x00" * int(SR * gap) * 4
@@ -212,11 +192,8 @@ def stage_tts(pr: Project, force: bool = False) -> dict:
             mp3 = src
         else:
             mp3 = pr.vo / f"seg{i:02d}.mp3"
-            if force or not mp3.is_file():
-                print(f"[>] TTS {i}/{len(segs)}  {seg.get('tts', '')[:32]}…")
-                mp3.write_bytes(tts_request(seg["tts"], voice, key))
-            else:
-                print(f"[=] 复用 {mp3.name}")
+            if not mp3.is_file():
+                raise SystemExit(f"[!] 第 {i} 段配音缺失：{mp3}")
         dur = media_info(mp3)["duration"]
         timeline.append({"i": i, "start": round(t, 3), "dur": round(dur, 3),
                          "end": round(t + dur, 3), "sub": sub, "file": str(mp3)})

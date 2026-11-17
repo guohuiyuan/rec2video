@@ -16,11 +16,11 @@
 | 环节 | 怎么做的 |
 |---|---|
 | 找素材 | 生成带**原片绝对时间**的联系表，一眼看出第几秒是有效画面 |
-| 配音 | Latent Audio 的社区音色（165 个），台词里能嵌 `[笑]` `[轻笑]` 这类气声。客户端在本仓库里，只要一把 key |
+| 配音 | 交给 [latent-media](https://github.com/guohuiyuan/latent-media) 的 `latent.py tts` 做：社区音色（165 个），台词里能嵌 `[笑]` `[轻笑]` 这类气声。本仓库不内置 TTS |
 | 对齐 | **先配音、再按每段旁白时长反剪画面**，拉伸系数恒定 1.0000，十段之后也不会漂 |
 | 字幕 | 从配音时间轴逐段推出来，尾部留 0.3s；超长只断在标点后（`，。：；？！` 优先于 `、`）；`[笑]` 这类气声只进口播不进字幕 |
 | 动效 | 点击处 `ease-out 推近 → 停留 → ease-in 拉回`，同帧打一记程序合成的点击音 |
-| 混音 | BGM 三选一：内置合成 / 你的曲子 / 可选在线站；侧链闪避（说话时自动让路）+ 限幅。字幕烧进画面另存 srt |
+| 混音 | BGM 来自 [go-music-dl](https://github.com/guohuiyuan/go-music-dl)，或你自己的曲子；侧链闪避（说话时自动让路）+ 限幅。字幕烧进画面另存 srt |
 | 包装 | HTML 模板 + 无头浏览器出 16:9 / 4:3 封面，抓仓库图标、语言、License、star |
 
 ## 安装
@@ -37,7 +37,7 @@ powershell -c ./install.ps1      # Windows
 ## 三步上手
 
 ```bash
-python scripts/rec2video.py doctor                       # 体检：ffmpeg / 配音 key / 封面引擎
+python scripts/rec2video.py doctor                       # 体检：ffmpeg / 配音 CLI / BGM / 封面
 python scripts/rec2video.py new ~/Videos/demo.mp4 \
         --repo https://github.com/owner/repo             # 建工程 + 联系表
 python scripts/rec2video.py build demo/project.json      # 出片
@@ -49,7 +49,7 @@ python scripts/rec2video.py build demo/project.json      # 出片
 python scripts/rec2video.py script demo/project.json narration.txt
 python scripts/rec2video.py build  demo/project.json            # 配音+对齐+推镜+字幕+BGM+渲染
 python scripts/rec2video.py check  demo/project.json            # 交付前自检
-python scripts/rec2video.py cover  demo/project.json            # 封面（有 playwright 走 HTML 版式，没有走 ffmpeg 简版）
+python scripts/rec2video.py cover  demo/project.json            # 封面（playwright 截 HTML 模板）
 ```
 
 产物：
@@ -96,13 +96,21 @@ python scripts/rec2video.py subs demo/project.json     # 只重出字幕，改�
 
 | 需要 | 必需 | 说明 |
 |---|---|---|
-| `ffmpeg` / `ffprobe` | ✅ | 进 PATH 即可 |
-| 配音 key | ✅ | Latent Audio `lat_tk_…`，在 audio.latent.moe 后台生成后 `rec2video.py key lat_tk_xxx` 存一把 |
-| BGM | – | **默认内置合成**（纯 math 算的垫底音，无网络、无版权问题）；也可 `--file` 用自己的曲子；在线音乐站是可选项，设 `MUSIC_BASE` 才启用 |
-| `playwright` | – | 只影响封面好不好看：没装就用 ffmpeg 画简版，照样出图 |
+| `ffmpeg` / `ffprobe` | ✅ | 进 PATH 即可，唯一的硬依赖 |
+| [latent-media](https://github.com/guohuiyuan/latent-media) | ✅ | 配音靠它：本仓库只调它的 `latent.py tts`，不内置 TTS。装好后 `rec2video.py key lat_tk_xxx` 把 key 交给它保管 |
+| [go-music-dl](https://github.com/guohuiyuan/go-music-dl) | – | 配乐靠它：`music-dl web --no-browser -p 8080` 起服务，`MUSIC_BASE` 指过去；不想接就把曲子 `--file` 丢进来 |
+| `playwright` | – | 出封面要：`pip install playwright`（复用本机 Edge），不装就只出 `spec.json` |
 
 ```bash
-python scripts/rec2video.py key lat_tk_xxx     # 写进 keys.env（已 gitignore）
+git clone https://github.com/guohuiyuan/latent-media ~/.workbuddy/skills/latent-media
+python scripts/rec2video.py key lat_tk_xxx     # 把 key 交给 latent-media 保管
+```
+
+配乐可选，接了 go-music-dl 才有自动挑曲：
+
+```bash
+music-dl web --no-browser -p 8080
+export MUSIC_BASE=http://127.0.0.1:8080/music
 ```
 
 ## 目录
@@ -112,7 +120,7 @@ SKILL.md                  # agent 入口：只给录屏时的完整执行手册
 scripts/rec2video.py      # 编排器（doctor/new/script/plan/cut/bgm/build/check/cover）
 scripts/screencut.py      # 扫描联系表 / 反剪 / 推镜坐标换算 / 自检
 scripts/render.py         # 配音 / 字幕 / 推镜音效 / 混音 / 编码
-scripts/bgm.py            # BGM：内置合成 / 本地曲子 / 可选在线站
+scripts/bgm.py            # go-music-dl 的 HTTP 客户端（找 / 下 BGM）
 scripts/cover.py          # HTML 模板 + 浏览器截图出封面
 assets/templates/         # 封面模板（横版 repo-page / 竖版 hero）
 references/               # capture 录制 · subtitles 字幕 · lessons 深坑 · pipeline 滤镜实现
@@ -123,6 +131,11 @@ examples/recordly-intro/  # 12 段精剪实例：project.json / plan.json / narr
 
 **AGPL-3.0**，见 [LICENSE](LICENSE)。
 
-**自包含**：本仓库不 import 任何其它项目，不依赖其它 skill / 子模块。外部只碰两样——`ffmpeg` 和 Latent Audio 的 HTTP 接口（配音，需自备 key）。BGM 默认本地合成，不出网；在线音乐站与 Recordly 录屏都只是可选工具。
+**依赖关系写清楚**：本仓库只有编排、剪辑、字幕、混音、封面模板这些自己的代码，其它能力一律调外部，不复制别人的实现进来——
 
-用到的第三方服务：Latent Audio（配音；模型权重为 CC-BY-NC，商用需另行确认）。BGM 与录屏素材的版权责任在录制/使用者。
+- 配音 → [latent-media](https://github.com/guohuiyuan/latent-media)（`latent.py tts`，需要它自己的 key）
+- 配乐 → [go-music-dl](https://github.com/guohuiyuan/go-music-dl)（它的 web 服务接口），或你自己的曲子
+- 封面渲染 → `playwright`（截本仓库的 HTML 模板）
+- 录屏 → OBS / [Recordly](https://github.com/webadderallorg/Recordly)，纯工具，怎么录都行
+
+语音模型权重为 CC-BY-NC，商用需另行确认；BGM 与录屏素材的版权责任在录制/使用者。

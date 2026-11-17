@@ -1,6 +1,6 @@
 ---
 name: rec2video
-description: "把一段原始录屏变成能直接发布的介绍片：自动体检录屏并生成带时间戳联系表、按文案用 Latent 音色配音、按旁白时长反剪画面（拉伸系数恒定 1.00）、点击处推镜 + 合成音效、烧中文字幕、配 BGM（内置合成/本地曲子/可选在线站）做侧链闪避、最后出 16:9/4:3 封面与标题简介。当用户说「把这个录屏做成介绍视频」「介绍这个 GitHub 项目 / 这个软件」「录屏太长没法配旁白」「给仓库录个 demo」「录屏和配音对不上」时使用。用户只给一个录屏文件也能跑完。"
+description: "把一段原始录屏变成能直接发布的介绍片：自动体检录屏并生成带时间戳联系表、按文案用 Latent 音色配音、按旁白时长反剪画面（拉伸系数恒定 1.00）、点击处推镜 + 合成音效、烧中文字幕、从 go-music-dl 取 BGM（或你给的曲子）做侧链闪避、最后出 16:9/4:3 封面与标题简介。当用户说「把这个录屏做成介绍视频」「介绍这个 GitHub 项目 / 这个软件」「录屏太长没法配旁白」「给仓库录个 demo」「录屏和配音对不上」时使用。用户只给一个录屏文件也能跑完。"
 display_name: "录屏成片流水线"
 agent_created: true
 version: 1.0.0
@@ -11,7 +11,7 @@ tags: [视频, video, 录屏, 介绍片, ffmpeg, 配音, TTS, 字幕, BGM, 推�
 
 一句话：**给一个录屏，出一条带配音、字幕、推镜、音效、BGM 的 1080p 介绍片 + 封面 + 标题简介。**
 
-**自包含**：整条流水线都在这个目录里，不调用别的 skill 或仓库。硬依赖只有 `ffmpeg` / `ffprobe`；配音需要一把 Latent Audio 的 key（HTTP 接口，客户端自带）；BGM 默认本地合成，不出网。录屏用 OBS / Recordly / 系统录屏都行（要点见 `references/capture.md`）。
+本仓库只做编排与渲染，能力全调外部，**不把别人的实现搬进来**：配音 → [latent-media](https://github.com/guohuiyuan/latent-media) 的 `latent.py tts`；配乐 → [go-music-dl](https://github.com/guohuiyuan/go-music-dl) 的服务接口（或用户自己的曲子）；封面 → `playwright` 截本仓库的 HTML 模板。硬依赖只有 `ffmpeg` / `ffprobe`。录屏用 OBS / Recordly / 系统录屏都行（要点见 `references/capture.md`）。
 
 ```
 录屏 ──new──▶ 联系表 + project.json ──script──▶ 文案 ──build──▶ 成片 ──cover──▶ 封面/标题
@@ -33,7 +33,7 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 2. **最多问用户两个问题**：① 这录屏在演示什么、仓库地址是哪个（能从上下文推出来就别问）；② 音色（默认 `voice-120` 大肥鱼，语气在文案里用 `[笑]`/`[轻笑]` 控制，不确定就别换）。
 3. **写文案**：`narration.txt`，一行一段，8–12 行 / 60–80 秒。规则见第 3 节。写完 `python "$R" script <工程>/project.json narration.txt`。
 4. `python "$R" build <工程>/project.json` —— 配音、对齐、推镜、字幕、BGM、渲染一条龙。
-   BGM 默认用内置合成（不出网）；用户给了曲子就 `--bgm-file <曲子>`，不想要 BGM 就 `--bgm off`。
+   用户给了曲子就 `--bgm-file <曲子>`；没给且没配 `MUSIC_BASE` 就干声出片，别卡在这。
 5. `python "$R" check <工程>/project.json`，再抽帧看图（第 5 节）。
 6. `python "$R" cover <工程>/project.json` 出封面，然后按第 6 节写标题与简介。
 
@@ -51,8 +51,8 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | `subs <project>` | 只重出字幕（`subs.ass` 烧录版 + `subs.srt` 外挂版），改字号/文案后秒验 |
 | `plan <project>` | 按旁白时长生成取材骨架 `plan.json` |
 | `cut <project>` | 按 `plan.json` 反剪画面 + 换算推镜点 |
-| `key <lat_tk_xxx>` | 把配音 key 存进 `keys.env`（已 gitignore），之后不用再 export |
-| `bgm <project> [--file 曲子] [--synth] [--mood tech\|calm\|warm] [-q 关键词] [--off]` | 三选一：本地曲子 / 内置合成（默认）/ 在线站（需 `MUSIC_BASE`） |
+| `key <lat_tk_xxx>` | 把配音 key 交给 latent-media 保存（转调它的 `keys` 命令） |
+| `bgm <project> [--file 曲子] [-q 关键词] [--pick id] [--off]` | 给你自己的曲子，或从 go-music-dl 搜一段（需 `MUSIC_BASE`） |
 | `build <project> [--preview N] [--force] [--bgm auto\|off]` | 配音 →（有 plan 就反剪）→ 配乐 → 渲染 |
 | `check <project>` | 交付前自检：stretch、锚点、推镜间距、标版 |
 | `cover <project> [--repo URL] [--sizes 16x9,4x3]` | 抓仓库信息出封面 PNG |
@@ -140,9 +140,10 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | 需要 | 说明 |
 |---|---|
 | `ffmpeg` / `ffprobe` | 唯一硬依赖，进 PATH 即可 |
-| 配音 key | 必需。Latent Audio 的 `lat_tk_…`，站点后台生成后 `rec2video.py key lat_tk_xxx`；也可用环境变量 `LATENT_AUDIO_KEY` |
-| 音色 | 默认 `voice-120`（大肥鱼，中文女声）。别的音色把 audio.latent.moe 首页条目地址最后那段 slug 填到 `voice.voice` |
-| BGM | 默认**内置合成**（纯合成氛围垫底音，无网络无版权问题，`--mood` 三档）。想用自己的曲子 `--file`；在线音乐站是可选的（设 `MUSIC_BASE`） |
+| latent-media | 必需，配音靠它的 `latent.py tts`（本仓库不内置 TTS）。路径自动找 `~/.workbuddy/skills/latent-media`，或用 `LATENT_CLI` 指定 |
+| 配音 key | 必需，`lat_tk_…`，`rec2video.py key lat_tk_xxx` 交给 latent-media 保管（也可 `LATENT_AUDIO_KEY` 环境变量） |
+| 音色 | 默认 `voice-120`（大肥鱼，中文女声）。别的音色把 audio.latent.moe 条目地址里的 slug 填到 `voice.voice`，用 `latent.py voices -q 关键词` 查 |
+| go-music-dl | 可选，配乐靠它：`music-dl web --no-browser -p 8080` + `MUSIC_BASE`。没有就 `--bgm-file` 给曲子，或干声出片 |
 | `playwright` | 只有出封面要；没装就只出 spec.json，手动补 |
 
 ## 9. 出错先看
@@ -152,9 +153,9 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | `stretch 0.9x` / 画面越走越早 | 文案太长或画面太短。加取材时长，或删几句 |
 | 推镜位置偏下/偏上 | `shots` 填的是画框坐标了。必须填**原片**坐标 |
 | 字幕贴死画框 | 画框下沿到输出底边不足 130px；压 `video.frame.h` |
-| 配音报 504 | `render.py` 会自动用 job_id 续取，不用重跑 |
+| 配音失败 / 找不到 latent.py | 跑 `doctor` 看「配音CLI」；路径不对就设 `LATENT_CLI`，key 失效用 `key lat_tk_xxx` 重灌 |
 | 渲染 `x264 malloc failed` | 内存不够，切片已加 `-threads 2`；降低输出分辨率 |
 | 中文变方块 | 系统缺 `Microsoft YaHei`；换 `subtitle.font` |
-| BGM 太闷/太吵 | `--mood calm` 更淡，或 `--file` 换曲子；只想要干净旁白就 `--bgm off` |
+| 音乐站连不上 | `--file` 用自己的曲子，或 `--bgm off` 干声出片 |
 
 深坑清单：`references/lessons.md`（坐标系、反剪顺序、字幕几何）；字幕细节：`references/subtitles.md`；滤镜实现：`references/pipeline.md`；录制参数：`references/capture.md`。
