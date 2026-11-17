@@ -1,0 +1,16 @@
+# 凭证
+keys.env
+.env
+*.key
+
+# 测试产物
+.tmp-test/
+.tmp/
+
+# Python
+__pycache__/
+*.pyc
+
+# 系统
+.DS_Store
+Thumbs.db

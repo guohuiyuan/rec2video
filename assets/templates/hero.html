@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>hero cover</title>
+<style>
+/* ------------------------------------------------------------------
+   hero：大字海报版式。适合 1:1 / 9:16 / 也需要强冲击力的 16:9。
+   背景 = 底色 + 两团品牌色光斑（可用 bg_image 覆盖）。
+   --u 由渲染器按 min(W/1920, H/1080) * k 算成 px。
+------------------------------------------------------------------ */
+*{margin:0;padding:0;box-sizing:border-box;}
+
+html,body{width:{{W}}px;height:{{H}}px;overflow:hidden;background:var(--bg);}
+body{
+  --u:{{u}}px;
+  --bg:#fbfbfd;
+  --ink:#111418;
+  --muted:#5b6572;
+  --brand:#2563eb;
+  --brand2:#f59e0b;
+  font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC","Source Han Sans SC",sans-serif;
+  color:var(--ink);
+  position:relative;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  -webkit-font-smoothing:antialiased;
+}
+body.dark{
+  --bg:#0a0c11; --ink:#f3f6fa; --muted:#9aa6b6; --brand:#4f8cff; --brand2:#ff8a3d;
+}
+
+/* 背景层：底色 + 光斑 + 可选底图 */
+.bg{position:absolute;inset:0;z-index:0;overflow:hidden;}
+.bg::before{content:"";position:absolute;
+  width:calc(var(--u) * 1500);height:calc(var(--u) * 1500);
+  left:calc(var(--u) * -520);top:calc(var(--u) * -640);
+  background:radial-gradient(circle,var(--brand) 0%,transparent 62%);
+  opacity:.16;filter:blur(calc(var(--u) * 8));}
+.bg::after{content:"";position:absolute;
+  width:calc(var(--u) * 1300);height:calc(var(--u) * 1300);
+  right:calc(var(--u) * -460);bottom:calc(var(--u) * -560);
+  background:radial-gradient(circle,var(--brand2) 0%,transparent 62%);
+  opacity:.15;filter:blur(calc(var(--u) * 8));}
+body.dark .bg::before{opacity:.30;}
+body.dark .bg::after{opacity:.26;}
+.bg img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+  opacity:.30;filter:saturate(.9);}
+.bg .veil{position:absolute;inset:0;
+  background:linear-gradient(180deg,color-mix(in srgb,var(--bg) 55%,transparent) 0%,
+             color-mix(in srgb,var(--bg) 82%,transparent) 55%,var(--bg) 100%);}
+
+/* 内容 */
+.wrap{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;
+  width:100%;padding:0 calc(var(--u) * 90);text-align:center;}
+
+.kicker{display:inline-flex;align-items:center;gap:calc(var(--u) * 12);
+  font-size:calc(var(--u) * 30);font-weight:600;letter-spacing:.06em;
+  color:var(--brand);padding:calc(var(--u) * 10) calc(var(--u) * 22);
+  border-radius:999px;background:color-mix(in srgb,var(--brand) 12%,transparent);}
+.kicker i{width:calc(var(--u) * 12);height:calc(var(--u) * 12);border-radius:50%;
+  background:currentColor;display:block;}
+
+h1{margin-top:calc(var(--u) * 40);font-size:calc(var(--u) * 150);font-weight:800;
+  line-height:1.1;letter-spacing:calc(var(--u) * -1);text-wrap:balance;
+  max-width:calc(var(--u) * 1700);}
+h1 em{font-style:normal;color:var(--brand);}
+h1 .hl{position:relative;white-space:nowrap;}
+h1 .hl::after{content:"";position:absolute;left:-.04em;right:-.04em;bottom:.02em;
+  height:.18em;background:var(--brand2);opacity:.42;border-radius:.1em;z-index:-1;}
+
+.en{margin-top:calc(var(--u) * 26);font-family:"Cascadia Mono",Consolas,"SFMono-Regular",monospace;
+  font-size:calc(var(--u) * 34);letter-spacing:.2em;color:var(--muted);font-weight:600;
+  text-transform:uppercase;}
+
+.desc{margin-top:calc(var(--u) * 26);font-size:calc(var(--u) * 34);line-height:1.66;
+  color:var(--muted);max-width:calc(var(--u) * 1360);}
+.desc b{color:var(--ink);font-weight:700;}
+
+.badges{margin-top:calc(var(--u) * 40);display:flex;align-items:center;gap:calc(var(--u) * 14);
+  flex-wrap:wrap;justify-content:center;}
+.pill{font-size:calc(var(--u) * 26);line-height:1;padding:calc(var(--u) * 12) calc(var(--u) * 22);
+  border-radius:999px;font-weight:600;letter-spacing:.02em;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:calc(var(--u) * 10);}
+.pill i{width:calc(var(--u) * 13);height:calc(var(--u) * 13);border-radius:50%;display:block;}
+.p-dark{background:#24292f;color:#fff;}
+.p-line{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 calc(var(--u) * 1.5) currentColor;
+  opacity:.55;}
+.p-mit{background:#6f42c1;color:#fff;}
+.p-blue{background:#0969da;color:#fff;}
+.p-dry{background:#bf8700;color:#fff;}
+.p-red{background:#cf222e;color:#fff;}
+
+.icon{margin-top:calc(var(--u) * 44);width:calc(var(--u) * 180);height:calc(var(--u) * 180);
+  border-radius:50%;background:var(--bg);
+  box-shadow:0 calc(var(--u) * 12) calc(var(--u) * 30) rgba(0,0,0,.20),
+             0 0 0 1px rgba(127,127,127,.14);}
+</style>
+</head>
+<body class="{{theme}}">
+  <div class="bg">
+    <img src="{{bg_image}}" alt="" onerror="this.style.display='none'">
+    <div class="veil" style="{{veil_display}}"></div>
+  </div>
+
+  <div class="wrap">
+    <div class="kicker" style="{{kicker_display}}"><i></i>{{kicker}}</div>
+    <h1>{{title_cn}}</h1>
+    <div class="en">{{title_en}}</div>
+    <div class="desc">{{desc}}</div>
+    <div class="badges">
+    {{badges}}
+    </div>
+    <img class="icon" src="{{icon}}" alt="" onerror="this.style.display='none'">
+  </div>
+</body>
+</html>

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>repo-page cover</title>
+<style>
+/* ------------------------------------------------------------------
+   repo-page：仿「代码托管平台仓库页」版式
+   上半 = 药丸导航 + 等宽英文项目名 + 圆形图标 + 中文大字 + 说明 + 徽章
+   下半 = 产品截图出血
+   所有尺寸 = calc(var(--u) * N)，N 是 1920x1080 基准下的像素值；
+   --u 由渲染器按 min(W/1920, H/1080) * k 直接算成 px，不靠 CSS 除法。
+------------------------------------------------------------------ */
+*{margin:0;padding:0;box-sizing:border-box;}
+
+html,body{width:{{W}}px;height:{{H}}px;overflow:hidden;background:var(--bg);}
+body{
+  --u:{{u}}px;
+  --bg:#ffffff;
+  --ink:#1f2328;
+  --muted:#59636e;
+  --line:#d0d7de;
+  --weak:#57606a;
+  --accent:#fd8c73;
+  font-family:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC","Source Han Sans SC",sans-serif;
+  color:var(--ink);
+  display:flex;flex-direction:column;align-items:center;
+  -webkit-font-smoothing:antialiased;
+}
+body.dark{
+  --bg:#0d1117; --ink:#e6edf3; --muted:#909dab; --line:#30363d; --weak:#8b949e; --accent:#f78166;
+}
+
+/* 顶部药丸导航 */
+.nav{display:flex;align-items:center;gap:calc(var(--u) * 34);margin-top:calc(var(--u) * 42);}
+.nav .item{display:flex;align-items:center;gap:calc(var(--u) * 9);
+  font-size:calc(var(--u) * 26);color:var(--ink);letter-spacing:.2px;
+  position:relative;padding-bottom:calc(var(--u) * 14);}
+.nav .item svg{width:calc(var(--u) * 25);height:calc(var(--u) * 25);
+  stroke:var(--weak);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;}
+.nav .item.on::after{content:"";position:absolute;left:0;right:0;bottom:0;
+  height:calc(var(--u) * 3);background:var(--accent);border-radius:calc(var(--u) * 2);}
+
+/* 英文项目名：等宽 + 宽字距 */
+.en{margin-top:calc(var(--u) * 44);font-family:"Cascadia Mono",Consolas,"SFMono-Regular",monospace;
+  font-weight:700;font-size:calc(var(--u) * 82);line-height:1.1;
+  letter-spacing:.085em;color:var(--ink);text-align:center;text-wrap:balance;
+  max-width:calc(var(--u) * 1500);}
+
+/* 项目图标 */
+.icon{margin-top:calc(var(--u) * 34);width:calc(var(--u) * {{icon_px}});height:calc(var(--u) * {{icon_px}});
+  border-radius:50%;background:var(--bg);
+  box-shadow:0 calc(var(--u) * 10) calc(var(--u) * 26) rgba(31,35,40,.18),
+             0 0 0 1px rgba(31,35,40,.07);}
+body.dark .icon{box-shadow:0 calc(var(--u) * 10) calc(var(--u) * 26) rgba(0,0,0,.55),
+             0 0 0 1px rgba(230,237,243,.12);}
+
+/* 中文主标题 */
+.cn{margin-top:calc(var(--u) * 24);font-size:calc(var(--u) * 98);font-weight:700;
+  letter-spacing:calc(var(--u) * 3);line-height:1.15;color:var(--ink);
+  text-align:center;text-wrap:balance;max-width:calc(var(--u) * 1600);}
+
+/* 说明 */
+.desc{margin-top:calc(var(--u) * 22);text-align:center;font-size:calc(var(--u) * 31);
+  line-height:1.62;color:var(--muted);letter-spacing:.3px;max-width:calc(var(--u) * 1560);}
+.desc b{color:var(--ink);font-weight:700;}
+
+/* 徽章 */
+.badges{margin-top:calc(var(--u) * 26);display:flex;align-items:center;
+  gap:calc(var(--u) * 14);flex-wrap:wrap;justify-content:center;
+  max-width:calc(var(--u) * 1560);}
+.pill{font-size:calc(var(--u) * 25);line-height:1;padding:calc(var(--u) * 11) calc(var(--u) * 20);
+  border-radius:999px;font-weight:600;letter-spacing:.3px;white-space:nowrap;
+  display:inline-flex;align-items:center;gap:calc(var(--u) * 10);}
+.pill i{width:calc(var(--u) * 13);height:calc(var(--u) * 13);border-radius:50%;display:block;}
+.p-dark{background:#24292f;color:#fff;}
+.p-line{background:transparent;color:var(--ink);box-shadow:inset 0 0 0 calc(var(--u) * 1.5) var(--line);}
+.p-mit{background:#6f42c1;color:#fff;}
+.p-blue{background:#0969da;color:#fff;}
+.p-dry{background:#bf8700;color:#fff;}
+.p-red{background:#cf222e;color:#fff;}
+
+/* 产品截图：顶部圆角，底边出血 */
+.shot{margin-top:calc(var(--u) * 44);width:calc(var(--u) * {{shot_w}});
+  border:calc(var(--u) * 1) solid var(--line);border-bottom:0;
+  border-radius:calc(var(--u) * 16) calc(var(--u) * 16) 0 0;overflow:hidden;}
+.shot img{display:block;width:100%;}
+</style>
+</head>
+<body class="{{theme}}">
+
+  <div class="nav">
+  {{nav}}
+  </div>
+
+  <div class="en">{{title_en}}</div>
+  <img class="icon" src="{{icon}}" alt="" onerror="this.style.display='none'">
+  <div class="cn">{{title_cn}}</div>
+  <div class="desc">{{desc}}</div>
+  <div class="badges">
+  {{badges}}
+  </div>
+
+  <div class="shot" style="{{shot_display}}"><img src="{{shot}}" alt=""></div>
+</body>
+</html>
