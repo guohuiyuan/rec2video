@@ -10,8 +10,8 @@
 
 一般不用直接调它，走上层 `rec2video.py build` 即可。
 零 Python 依赖，只要求 PATH 里有 ffmpeg / ffprobe。TTS 走 Latent Audio
-（https://audio.latent.moe，配音引擎见 github.com/guohuiyuan/latent-media；
-也可用现成音频文件，或复用上一次的 narration.wav）。
+（Latent Audio 的 /v1/audio/speech 接口，key 自己填；也可用现成音频文件，
+或复用上一次的 narration.wav）。
 
 设计参照 Recordly 的演示节奏：画面嵌在深色画框里，点击处做一次
 「ease-out 推近 → 停留 → ease-in 拉回」的推镜，同时打一记合成点击音效；
@@ -91,18 +91,16 @@ def read_key(proj: dict) -> str:
         return os.environ["LATENT_AUDIO_KEY"]
     home = Path.home()
     candidates = [v.get("key_file")] if v.get("key_file") else []
-    # 依次找：仓库根 keys.env → ~/.config/latent/keys.env → latent-media skill 的 keys.env
-    candidates += [str(ROOT / "keys.env"), str(home / ".config" / "latent" / "keys.env"),
-                   str(home / ".workbuddy" / "skills" / "latent-media" / "keys.env")]
+    # 依次找：仓库根 keys.env → ~/.config/rec2video/keys.env
+    candidates += [str(ROOT / "keys.env"), str(home / ".config" / "rec2video" / "keys.env")]
     for kf in candidates:
         p = Path(os.path.expanduser(str(kf)))
         if p.is_file():
             for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
                 if line.strip().startswith("LATENT_AUDIO_KEY"):
                     return line.split("=", 1)[1].strip().strip('"').strip("'")
-    raise SystemExit("[!] 找不到 Latent Audio 的 key：设环境变量 LATENT_AUDIO_KEY，"
-                     "或在 project.json 的 voice.key / voice.key_file 里给，"
-                     "或写进仓库根目录的 keys.env（配法见 github.com/guohuiyuan/latent-media）")
+    raise SystemExit("[!] 找不到配音 key：跑 `python scripts/rec2video.py key lat_tk_xxx` 存一把，"
+                     "或设环境变量 LATENT_AUDIO_KEY（key 在 audio.latent.moe 站点后台生成）")
 
 
 

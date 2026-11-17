@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 """rec2video · cover — 用 HTML 模板 + headless 浏览器生成多尺寸封面图。
 
-依赖可选：pip install playwright && playwright install chromium（或复用本机 Edge）。
+两条渲染路径：有 playwright 用 HTML 模板（好看），没有就用 ffmpeg 画简版（够用）。
+需要时再装：pip install playwright（复用本机 Edge，不用下载 chromium）。
 
 子命令：
   spec   从 GitHub 仓库抓信息，生成 spec.json 草稿
@@ -24,6 +25,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -123,8 +125,8 @@ def load_spec(path: Path) -> dict:
     return spec
 
 
-def resolve_asset(spec: dict, key: str):
-    """spec 里的图片路径按 spec 文件所在目录解析。"""
+def asset_path(spec: dict, key: str):
+    """spec 里的图片路径按 spec 文件所在目录解析，返回本地路径（给 ffmpeg 用）。"""
     v = spec.get(key)
     if not v:
         return None
@@ -133,7 +135,12 @@ def resolve_asset(spec: dict, key: str):
         p = Path(spec["_dir"]) / p
     if not p.exists():
         raise SystemExit(f"[!] {key} 指向的文件不存在: {p}")
-    return file_uri(p)
+    return p
+
+
+def resolve_asset(spec: dict, key: str):
+    p = asset_path(spec, key)
+    return file_uri(p) if p else None
 
 
 # ---------------------------------------------------------------- 渲染
@@ -347,14 +354,172 @@ def spec_from_repo(url: str, out: Path, sizes: list[str]):
             {"icon": "lock", "text": "安全性"},
         ],
         "badges": badge,
-        "icon": "icon.png" if (out / "icon.png").exists() else "",
-        "shot": "shot.png" if (out / "shot.png").exists() else "",
+        "icon": next((f"icon{e}" for e in (".png", ".jpg", ".gif")
+                      if (out / f"icon{e}").exists()), ""),
+        "shot": next((f"shot{e}" for e in (".png", ".jpg")
+                      if (out / f"shot{e}").exists()), ""),
     }
     sp = out / "spec.json"
     sp.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[+] spec -> {sp}")
     print(f"    标题、文案、徽章都还是占位，改完再 render。")
     return sp
+
+
+# ---------------------------------------------------------------- 兜底渲染（ffmpeg）
+# 没装 playwright 也能出封面：渐变底 + 图标 + 大字标题 + 两行副标题 + 底部徽章，
+# 全部用 drawtext 画（文字走 textfile，中文/标点不用转义）。
+FONT_BOLD = ["C:/Windows/Fonts/msyhbd.ttc", "C:/Windows/Fonts/msyh.ttc",
+             "/System/Library/Fonts/PingFang.ttc",
+             "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"]
+FONT_REG = ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simhei.ttf",
+            "/System/Library/Fonts/PingFang.ttc",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
+
+
+def pick_font(cands: list[str]) -> str | None:
+    for c in cands:
+        if Path(c).is_file():
+            return c
+    return None
+
+
+def esc_font(p: str) -> str:
+    """ffmpeg 滤镜里的 Windows 盘符冒号要转义，引号也不能留。"""
+    return p.replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
+
+
+def wrap_cjk(text: str, max_chars: int) -> list[str]:
+    """按字数折行；遇到英文句子优先在空格处断，别把单词劈两半。"""
+    text = re.sub(r"<[^>]+>", "", text or "").strip()
+    if not text:
+        return []
+    lines, cur = [], ""
+    for ch in text:
+        if ch == "\n":
+            lines.append(cur)
+            cur = ""
+            continue
+        cur += ch
+        if len(cur) >= max_chars:
+            sp = cur.rfind(" ")
+            if sp > 0 and len(cur) - sp <= 14:      # 空格够近就在这断
+                lines.append(cur[:sp])
+                cur = cur[sp + 1:]
+            else:
+                lines.append(cur)
+                cur = ""
+    if cur:
+        lines.append(cur)
+    return lines[:3]
+
+
+def render_ffmpeg(spec: dict, outdir: Path, only: list[str] | None, quiet: bool = False) -> list[dict]:
+    """不依赖浏览器；只要求 PATH 里有 ffmpeg。版式固定为「左对齐海报」。"""
+    bold, reg = pick_font(FONT_BOLD), pick_font(FONT_REG)
+    if not bold or not reg:
+        raise SystemExit("[!] 找不到中文字体，装一个（Windows 自带微软雅黑即可）或改用 playwright 引擎")
+    icon = asset_path(spec, "icon")
+    stem = spec.get("output_stem") or "cover"
+    sizes = only or spec.get("sizes") or ["16x9"]
+    build = outdir / ".build"
+    build.mkdir(parents=True, exist_ok=True)
+    results = []
+
+    for name in sizes:
+        if name not in SIZES:
+            raise SystemExit(f"[!] 未知尺寸 {name}；可选: {', '.join(SIZES)}")
+        W, H, _ = SIZES[name]
+        m = round(W * 0.058)
+        icon_px = round(W * 0.10)
+        t_size = round(H * 0.082)
+        s_size = round(H * 0.033)
+        k_size = round(H * 0.026)
+        y = m
+        if icon:
+            y += icon_px + round(H * 0.045)
+
+        tf = {}
+        def text(slot: str, s: str) -> str:
+            p = build / f"{stem}-{name}-{slot}.txt"
+            p.write_text(s, encoding="utf-8")
+            tf[slot] = p
+            return str(p).replace("\\", "/")
+
+        chain = []
+        chain.append(f"gradients=s={W}x{H}:c0=0x111634:c1=0x2c3468:d=1:x0=0:y0=0:"
+                     f"x1={W}:y1={H}[bg]")
+        inputs = [["-f", "lavfi", "-i", f"gradients=s={W}x{H}:c0=0x111634:c1=0x2c3468:d=1:"
+                                        f"x0=0:y0=0:x1={W}:y1={H}"]]
+        cur = "bg"
+        if icon:
+            inputs.append(["-i", str(icon)])
+            chain.append(f"[1:v]scale={icon_px}:-1,format=rgba[ic]")
+            chain.append(f"[{cur}][ic]overlay={m}:{m}[wi]")
+            cur = "wi"
+
+        def draw(slot: str, s: str, size: int, color: str, font: str, yy: int) -> int:
+            """一行一个 drawtext（
+ 的行高不可控），返回画完后的 y。"""
+            nonlocal cur
+            lbl = f"t_{slot}"
+            chain.append(
+                f"[{cur}]drawtext=fontfile='{esc_font(font)}':textfile='{text(slot, s)}':"
+                f"fontsize={size}:fontcolor={color}:x={m}:y={yy}:expansion=none[{lbl}]")
+            cur = lbl
+            return yy
+
+        def draw_block(slot: str, lines: list[str], size: int, color: str, font: str,
+                       yy: int, lead: float) -> None:
+            for i, ln in enumerate(lines):
+                draw(f"{slot}{i}", ln, size, color, font, int(yy + i * lead))
+
+        title = (spec.get("title_en") or spec.get("title_cn") or "").strip()
+        cn = (spec.get("title_cn") or "").strip()
+        kicker = (spec.get("kicker") or "").strip()
+        if kicker:
+            draw("kick", kicker.upper(), k_size, "0x8ab4ff", reg, m)
+        if title:
+            per = max(6, int((W - 2 * m) / (t_size * 0.62)))
+            lines = wrap_cjk(title, per) or [title]
+            draw_block("title", lines, t_size, "white", bold, y, t_size * 1.22)
+            y += int(t_size * 1.22 * len(lines)) + round(H * 0.008)
+        if cn and cn != title and cn != "一句话写清它是什么":
+            draw("cn", cn, s_size, "0xc9d2f0", reg, y)
+            y += int(s_size * 1.6)
+
+        desc = spec.get("desc") or ""
+        if desc:
+            per = max(10, int((W - 2 * m) / (s_size * 1.02)))
+            lines = wrap_cjk(desc, per)
+            if lines:
+                y = max(y + round(H * 0.03), y)
+                draw_block("desc", lines, s_size, "0xd6dcf5", reg, y, s_size * 1.55)
+
+        foot = []
+        for b in (spec.get("badges") or []):
+            if isinstance(b, dict) and b.get("text"):
+                foot.append(str(b["text"]))
+        footer = " · ".join(foot) or (spec.get("footer") or "")
+        if footer:
+            draw("foot", footer, k_size, "0xb8c2e0", reg, H - m - k_size)
+
+        cmd = ["ffmpeg", "-hide_banner", "-v", "error", "-y"]
+        for grp in inputs:
+            cmd += grp
+        cmd += ["-filter_complex", ";".join(chain), "-map", f"[{cur}]", "-frames:v", "1", "-update", "1",
+                str(outdir / f"{stem}-{name}.png")]
+        p = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        png = outdir / f"{stem}-{name}.png"
+        if p.returncode != 0 or not png.is_file():
+            raise SystemExit(f"[!] ffmpeg 出图失败\n{(p.stderr or '')[-1200:]}")
+        results.append({"size": name, "file": str(png), "w": W, "h": H, "k": 1.0,
+                        "warn": ["ffmpeg 简版版式"]})
+        if not quiet:
+            print(f"OK {png.name}  {W}x{H}  （ffmpeg 兜底版式）")
+    return results
 
 
 # ---------------------------------------------------------------- CLI
@@ -368,6 +533,8 @@ def main():
     s1.add_argument("-s", "--sizes", help="逗号分隔，覆盖 spec 里的 sizes，如 16x9,4x3")
     s1.add_argument("--scale", type=float, default=1.0, help="输出倍率，2 = 高清 2x")
     s1.add_argument("--channel", help="msedge / chrome；默认自动探测")
+    s1.add_argument("--engine", choices=["auto", "pw", "ffmpeg"], default="auto",
+                    help="auto=有 playwright 用浏览器版式，否则退到 ffmpeg 简版")
     s1.add_argument("--json", action="store_true", help="机器可读输出")
 
     s2 = sub.add_parser("spec", help="从 GitHub 仓库生成 spec 草稿")
@@ -387,7 +554,17 @@ def main():
         spec_from_repo(a.repo, a.outdir, [s.strip() for s in a.sizes.split(",") if s.strip()])
         return
     sizes = [s.strip() for s in a.sizes.split(",")] if a.sizes else None
-    res = render(a.spec, a.outdir, sizes, a.scale, a.channel, quiet=a.json)
+    engine = a.engine
+    if engine == "auto":
+        try:
+            import playwright  # noqa: F401
+            engine = "pw"
+        except Exception:  # noqa: BLE001
+            engine = "ffmpeg"
+    if engine == "ffmpeg":
+        res = render_ffmpeg(load_spec(a.spec), a.outdir, sizes, quiet=a.json)
+    else:
+        res = render(a.spec, a.outdir, sizes, a.scale, a.channel, quiet=a.json)
     if a.json:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     bad = [r for r in res if r["warn"]]

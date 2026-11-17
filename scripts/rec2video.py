@@ -9,7 +9,7 @@
     python scripts/rec2video.py build demo/project.json
 
 子命令
-    doctor   体检环境（ffmpeg / 配音 key / 音乐站 / 可选的 playwright）
+    doctor   体检环境（ffmpeg / 配音 key / BGM / 封面引擎）
     new      建工程：探测录屏、抽带时间戳联系表、写 project.json 预设
     script   把 txt 文案（一行一段）灌进 project.json
     info     看录屏参数 + 抽帧
@@ -17,12 +17,13 @@
     subs     只重出字幕（ass 烧录版 + srt 外挂版）
     plan     按配音时长生成取材骨架 plan.json
     cut      按 plan.json 反剪画面，并把推镜点换算进 project.json
-    bgm      从音乐站找一段 BGM 并下载、写进工程
+    bgm      配 BGM：本地曲子 / 内置合成 / 可选在线站
     build    配音 →（可选）反剪 →（可选）配乐 → 渲染成片
     check    交付前自检
-    cover    抓仓库信息，出 16:9 + 4:3 封面
+    cover    抓仓库信息，出 16:9 + 4:3 封面（浏览器版式或 ffmpeg 简版）
 
-零第三方依赖，只要求 PATH 里有 ffmpeg / ffprobe。
+自包含：只要求 PATH 里有 ffmpeg / ffprobe，配音靠一把 Latent Audio 的 key，
+BGM 默认本地合成，封面没装 playwright 就用 ffmpeg 画。
 """
 from __future__ import annotations
 
@@ -158,8 +159,7 @@ def cmd_doctor(a) -> None:
 
     key, key_src = os.environ.get("LATENT_AUDIO_KEY"), "环境变量"
     if not key:
-        for f in (ROOT / "keys.env", Path.home() / ".config" / "latent" / "keys.env",
-                  Path.home() / ".workbuddy" / "skills" / "latent-media" / "keys.env"):
+        for f in (ROOT / "keys.env", Path.home() / ".config" / "rec2video" / "keys.env"):
             if f.is_file():
                 for ln in f.read_text(encoding="utf-8", errors="ignore").splitlines():
                     if ln.strip().startswith("LATENT_AUDIO_KEY"):
@@ -170,25 +170,56 @@ def cmd_doctor(a) -> None:
     if key:
         say(f"配音key  ✓ {key[:8]}…{key[-4:]}  ({key_src})")
     else:
-        say("配音key  ✗ 没找到 —— 见 https://github.com/guohuiyuan/latent-media")
+        say("配音key  ✗ 没有 —— 跑 `rec2video.py key lat_tk_xxx` 存一把（audio.latent.moe 后台生成）")
         ok = False
 
-    out = tool("bgm.py", "search", "lofi", "--json", capture=True)
-    try:
-        n = len(json.loads(out).get("rows", []))
-        say(f"音乐站    ✓ 返回 {n} 条候选（{os.environ.get('MUSIC_BASE') or 'go-music-dl 默认实例'}）")
-    except Exception:  # noqa: BLE001
-        say("音乐站    ✗ 连不上 —— BGM 可以留空，或用 MUSIC_BASE / --base 指自己的 go-music-dl")
+    base = os.environ.get("MUSIC_BASE")
+    if base:
+        try:
+            n = len(json.loads(tool("bgm.py", "--base", base, "search", "lofi", "--json",
+                                    capture=True)).get("rows", []))
+            say(f"音乐站    ✓ {base}  返回 {n} 条候选")
+        except SystemExit:
+            say(f"音乐站    ✗ {base} 连不上 —— BGM 会自动退到内置合成")
+    else:
+        say("音乐站    – 未配（可选）。BGM 默认用内置合成，或 --file 给自己的曲子")
     try:
         import playwright  # noqa: F401
         say("封面      ✓ playwright 已装")
     except Exception:  # noqa: BLE001
         alt = python_for_cover()
         if alt:
-            say(f"封面      ✓ 当前解释器没装，但会用 {alt} 出封面")
+            say(f"封面      ✓ 当前解释器没装 playwright，会用 {alt} 出 HTML 版式")
         else:
-            say("封面      – 没装 playwright（只有出封面需要：pip install playwright）")
+            say("封面      ✓ 没有 playwright，用 ffmpeg 简版版式（装了更好看：pip install playwright）")
     say("\n环境" + ("就绪，可以开录了。" if ok else "有缺口，先补齐再往下。"))
+
+
+def cmd_key(a) -> None:
+    """存配音 key 到 keys.env（已 gitignore），免得每次 export。"""
+    if a.file:
+        target = Path(a.file).expanduser().resolve()
+    elif getattr(a, "global_", False):
+        target = Path.home() / ".config" / "rec2video" / "keys.env"
+    else:
+        target = ROOT / "keys.env"
+    token = a.token.strip()
+    if not token.startswith("lat_tk_"):
+        say("[!] 这不像 Latent Audio 的 key（前缀通常是 lat_tk_），照写不误，失败再回来看")
+    keep = []
+    if target.is_file():
+        for ln in target.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if ln.strip() and not ln.strip().startswith("LATENT_AUDIO_KEY"):
+                keep.append(ln)
+    keep.append(f"LATENT_AUDIO_KEY={token}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("\n".join(["# 配音 key —— 不要提交", *keep]) + "\n", encoding="utf-8")
+    try:
+        os.chmod(target, 0o600)
+    except Exception:  # noqa: BLE001
+        pass
+    say(f"[+] 已写入 {target}")
+    say("    现在可以直接 build 了；换 key 再跑一次 key 即可")
 
 
 # ---------------------------------------------------------------- new
@@ -332,6 +363,7 @@ def _timeline_total(base: Path) -> float:
 
 
 def cmd_bgm(a) -> None:
+    """三条路：本地曲子 --file / 内置合成（默认）/ 在线音乐站（配了 MUSIC_BASE 才走）。"""
     pj = Path(a.project).resolve()
     base = pj.parent
     proj = load(pj)
@@ -341,23 +373,47 @@ def cmd_bgm(a) -> None:
         say("[+] BGM 已关掉（成片照样有旁白/字幕/音效）")
         return
     want = _timeline_total(base) or 80.0
-    if a.pick:
-        tool("bgm.py", "get", a.pick, base / "assets" / "bgm.mp3")
-    else:
-        keys = a.q or ["upbeat technology", "lofi study", "chill background"]
-        out = tool("bgm.py", "search", *keys, "--json", capture=True)
-        rows = json.loads(out).get("rows", [])
-        rows = [r for r in rows if r.get("dur", 0) >= 45]
+    (base / "assets").mkdir(parents=True, exist_ok=True)
+    mp3 = base / "assets" / "bgm.mp3"          # 外部曲子统一叫这个名字
+    wav = base / "assets" / "bgm.wav"          # 合成产物是 wav，别挂 mp3 的扩展名
+
+    def do_synth() -> tuple[str, str]:
+        tool("bgm.py", "synth", wav, "--seconds", f"{max(want, 20) + 1.0:.1f}", "--mood", a.mood)
+        return "assets/bgm.wav", f"内置合成（{a.mood}）"
+
+    if a.file:
+        src = Path(a.file).expanduser().resolve()
+        if not src.is_file():
+            die(f"找不到 {src}")
+        if src != mp3:
+            shutil.copyfile(src, mp3)
+        rel, via = "assets/bgm.mp3", f"本地文件 {src.name}"
+    elif a.pick:
+        tool("bgm.py", "get", a.pick, mp3)
+        rel, via = "assets/bgm.mp3", f"音乐站 id={a.pick}"
+    elif a.q or os.environ.get("MUSIC_BASE"):
+        try:
+            keys = a.q or ["upbeat technology", "lofi study", "chill background"]
+            out = tool("bgm.py", "search", *keys, "--json", capture=True)
+            rows = [r for r in json.loads(out).get("rows", []) if r.get("dur", 0) >= 45]
+        except SystemExit:
+            say("[!] 音乐站连不上 → 改用内置合成")
+            rows = []
         if not rows:
-            die("音乐站没搜到合适的，换关键词，或手头有曲子就 --pick 不了、直接把文件放到 assets/bgm.mp3")
-        best = max(rows, key=lambda r: r.get("score", 0) + (6 if r["dur"] >= want else 0))
-        m, s = divmod(best["dur"], 60)
-        say(f"[i] 选中 {best['name']} — {best['artist']}  {m}:{s:02d}  id={best['id']}")
-        tool("bgm.py", "get", best["id"], base / "assets" / "bgm.mp3")
-    proj["bgm"]["src"] = "assets/bgm.mp3"
+            rel, via = do_synth()
+        else:
+            best = max(rows, key=lambda r: r.get("score", 0) + (6 if r["dur"] >= want else 0))
+            m, s = divmod(best["dur"], 60)
+            say(f"[i] 选中 {best['name']} — {best['artist']}  {m}:{s:02d}  id={best['id']}")
+            tool("bgm.py", "get", best["id"], mp3)
+            rel, via = "assets/bgm.mp3", f"音乐站 {best['name'][:20]}"
+    else:
+        rel, via = do_synth()
+
+    proj["bgm"]["src"] = rel
     proj["bgm"]["volume"] = a.volume
     save(pj, proj)
-    say(f"[+] 写进 {pj.name}：bgm.src=assets/bgm.mp3 volume={a.volume} duck=True")
+    say(f"[+] BGM ← {via}；写进 {pj.name}：{rel} volume={a.volume} duck=True")
 
 
 def cmd_build(a) -> None:
@@ -374,9 +430,17 @@ def cmd_build(a) -> None:
         cmd_cut(argparse.Namespace(project=str(pj), force=a.force))
     elif plan_p.is_file() and not cut_done:
         say("[!] plan.json 里还有段没填 at —— 这次直接用原录屏整段渲染（stretch 对齐）")
-    if a.bgm == "auto" and not (proj.get("bgm") or {}).get("src"):
+    have_bgm = (proj.get("bgm") or {}).get("src") and (base / proj["bgm"]["src"]).is_file()
+    if a.bgm == "off":
+        if (proj.get("bgm") or {}).get("src"):
+            proj["bgm"]["src"] = ""
+            save(pj, proj)
+    elif a.bgm_file:
         cmd_bgm(argparse.Namespace(project=str(pj), q=None, pick=None, off=False,
-                                   volume=0.26))
+                                   file=a.bgm_file, synth=False, mood=a.mood, volume=0.26))
+    elif a.bgm == "synth" or not have_bgm:
+        cmd_bgm(argparse.Namespace(project=str(pj), q=None, pick=None, off=False,
+                                   file=None, synth=True, mood=a.mood, volume=0.26))
 
     args = ["run", pj] + (["--force"] if a.force else [])
     if a.preview:
@@ -437,14 +501,9 @@ def cmd_cover(a) -> None:
     specs = sorted(outdir.glob("*.json"))
     if not specs:
         die(f"没生成 spec.json，看 {outdir}")
-    py = python_for_cover()
-    if not py:
-        say(f"\n[!] spec 已生成：{specs[0]}\n"
-            f"    渲染要 playwright：pip install playwright  （用本机 Edge 当内核，"
-            f"不用再装 chromium）\n"
-            f"    装好后重跑：python scripts/cover.py render {specs[0]} -o {outdir} -s {a.sizes}")
-        return
-    tool("cover.py", "render", specs[0], "-o", outdir, "-s", a.sizes, py=py)
+    py = python_for_cover() or PY
+    tool("cover.py", "render", specs[0], "-o", outdir, "-s", a.sizes,
+         "--engine", "auto", py=py)
     say(f"\n[+] 封面在 {outdir}（改 spec.json 里的文案再 render 一次即可）")
     say("    标题/简介套句式和封面数字保持一致，别抄参考视频的 star 数")
 
@@ -486,6 +545,13 @@ def main() -> None:
     t.add_argument("--force", action="store_true")
     t.set_defaults(func=cmd_tts)
 
+    kk = sub.add_parser("key", help="存配音 key 到 keys.env")
+    kk.add_argument("token", help="lat_tk_xxx")
+    kk.add_argument("--file", help="写到指定文件（默认仓库根 keys.env）")
+    kk.add_argument("-g", "--global", dest="global_", action="store_true",
+                    help="写到 ~/.config/rec2video/keys.env（换安装目录也不丢）")
+    kk.set_defaults(func=cmd_key)
+
     sb = sub.add_parser("subs", help="只重出字幕（ass + srt）")
     sb.add_argument("project")
     sb.set_defaults(func=cmd_subs)
@@ -503,8 +569,11 @@ def main() -> None:
 
     b = sub.add_parser("bgm", help="找一段 BGM 并用上")
     b.add_argument("project")
-    b.add_argument("-q", "--q", nargs="+", help="搜索关键词")
+    b.add_argument("-q", "--q", nargs="+", help="音乐站搜索关键词（需 MUSIC_BASE）")
     b.add_argument("--pick", help="直接指定音乐站 id")
+    b.add_argument("--file", help="用本地曲子（推荐，最省事）")
+    b.add_argument("--synth", action="store_true", help="用内置合成（默认）")
+    b.add_argument("--mood", default="tech", choices=["tech", "calm", "warm"])
     b.add_argument("--off", action="store_true", help="关掉 BGM")
     b.add_argument("--volume", type=float, default=0.26)
     b.set_defaults(func=cmd_bgm)
@@ -513,7 +582,11 @@ def main() -> None:
     d.add_argument("project")
     d.add_argument("--preview", type=float, help="只渲前 N 秒")
     d.add_argument("--force", action="store_true", help="重做配音/重切")
-    d.add_argument("--bgm", choices=["auto", "off"], default="auto")
+    d.add_argument("--bgm", choices=["auto", "off", "synth"], default="auto",
+                   help="auto=有曲子就用、没有就合成一段；off=不要 BGM")
+    d.add_argument("--bgm-file", help="用自己的曲子（复制进 assets/bgm.mp3）")
+    d.add_argument("--mood", default="tech", choices=["tech", "calm", "warm"],
+                   help="合成 BGM 的氛围")
     d.set_defaults(func=cmd_build)
 
     k = sub.add_parser("check", help="交付前自检")

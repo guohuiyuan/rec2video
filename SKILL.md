@@ -1,6 +1,6 @@
 ---
 name: rec2video
-description: "把一段原始录屏变成能直接发布的介绍片：自动体检录屏并生成带时间戳联系表、按文案用 Latent 音色配音、按旁白时长反剪画面（拉伸系数恒定 1.00）、点击处推镜 + 合成音效、烧中文字幕、从 go-music-dl 取 BGM 做侧链闪避、最后出 16:9/4:3 封面与标题简介。当用户说「把这个录屏做成介绍视频」「介绍这个 GitHub 项目 / 这个软件」「录屏太长没法配旁白」「给仓库录个 demo」「录屏和配音对不上」时使用。用户只给一个录屏文件也能跑完。"
+description: "把一段原始录屏变成能直接发布的介绍片：自动体检录屏并生成带时间戳联系表、按文案用 Latent 音色配音、按旁白时长反剪画面（拉伸系数恒定 1.00）、点击处推镜 + 合成音效、烧中文字幕、配 BGM（内置合成/本地曲子/可选在线站）做侧链闪避、最后出 16:9/4:3 封面与标题简介。当用户说「把这个录屏做成介绍视频」「介绍这个 GitHub 项目 / 这个软件」「录屏太长没法配旁白」「给仓库录个 demo」「录屏和配音对不上」时使用。用户只给一个录屏文件也能跑完。"
 display_name: "录屏成片流水线"
 agent_created: true
 version: 1.0.0
@@ -11,7 +11,7 @@ tags: [视频, video, 录屏, 介绍片, ffmpeg, 配音, TTS, 字幕, BGM, 推�
 
 一句话：**给一个录屏，出一条带配音、字幕、推镜、音效、BGM 的 1080p 介绍片 + 封面 + 标题简介。**
 
-只依赖 `ffmpeg` / `ffprobe`。配音走 Latent Audio（[latent-media](https://github.com/guohuiyuan/latent-media)），配乐走 [go-music-dl](https://github.com/guohuiyuan/go-music-dl)，录屏用 OBS / [Recordly](https://github.com/webadderallorg/Recordly) 都行（录制要点见 `references/capture.md`）。
+**自包含**：整条流水线都在这个目录里，不调用别的 skill 或仓库。硬依赖只有 `ffmpeg` / `ffprobe`；配音需要一把 Latent Audio 的 key（HTTP 接口，客户端自带）；BGM 默认本地合成，不出网。录屏用 OBS / Recordly / 系统录屏都行（要点见 `references/capture.md`）。
 
 ```
 录屏 ──new──▶ 联系表 + project.json ──script──▶ 文案 ──build──▶ 成片 ──cover──▶ 封面/标题
@@ -33,6 +33,7 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 2. **最多问用户两个问题**：① 这录屏在演示什么、仓库地址是哪个（能从上下文推出来就别问）；② 音色（默认 `voice-120` 大肥鱼，语气在文案里用 `[笑]`/`[轻笑]` 控制，不确定就别换）。
 3. **写文案**：`narration.txt`，一行一段，8–12 行 / 60–80 秒。规则见第 3 节。写完 `python "$R" script <工程>/project.json narration.txt`。
 4. `python "$R" build <工程>/project.json` —— 配音、对齐、推镜、字幕、BGM、渲染一条龙。
+   BGM 默认用内置合成（不出网）；用户给了曲子就 `--bgm-file <曲子>`，不想要 BGM 就 `--bgm off`。
 5. `python "$R" check <工程>/project.json`，再抽帧看图（第 5 节）。
 6. `python "$R" cover <工程>/project.json` 出封面，然后按第 6 节写标题与简介。
 
@@ -50,7 +51,8 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | `subs <project>` | 只重出字幕（`subs.ass` 烧录版 + `subs.srt` 外挂版），改字号/文案后秒验 |
 | `plan <project>` | 按旁白时长生成取材骨架 `plan.json` |
 | `cut <project>` | 按 `plan.json` 反剪画面 + 换算推镜点 |
-| `bgm <project> [-q 关键词] [--pick id] [--off]` | 找一段 BGM 并用上（自动挑够长、像纯音乐的） |
+| `key <lat_tk_xxx>` | 把配音 key 存进 `keys.env`（已 gitignore），之后不用再 export |
+| `bgm <project> [--file 曲子] [--synth] [--mood tech\|calm\|warm] [-q 关键词] [--off]` | 三选一：本地曲子 / 内置合成（默认）/ 在线站（需 `MUSIC_BASE`） |
 | `build <project> [--preview N] [--force] [--bgm auto\|off]` | 配音 →（有 plan 就反剪）→ 配乐 → 渲染 |
 | `check <project>` | 交付前自检：stretch、锚点、推镜间距、标版 |
 | `cover <project> [--repo URL] [--sizes 16x9,4x3]` | 抓仓库信息出封面 PNG |
@@ -138,9 +140,9 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | 需要 | 说明 |
 |---|---|
 | `ffmpeg` / `ffprobe` | 唯一硬依赖，进 PATH 即可 |
-| 配音 key | Latent Audio，`lat_tk_` 开头。写进仓库根 `keys.env` 或 `~/.config/latent/keys.env`，或环境变量 `LATENT_AUDIO_KEY`。配法见 [latent-media](https://github.com/guohuiyuan/latent-media) |
-| 音色 | 默认 `voice-120`（大肥鱼，中文女声）。换音色查 latent-media 的 `voices` 命令 |
-| BGM | 默认连自建 [go-music-dl](https://github.com/guohuiyuan/go-music-dl) 实例；`MUSIC_BASE` 换成自己的。连不上就让 `bgm.src` 留空——片子照样有旁白/字幕/音效 |
+| 配音 key | 必需。Latent Audio 的 `lat_tk_…`，站点后台生成后 `rec2video.py key lat_tk_xxx`；也可用环境变量 `LATENT_AUDIO_KEY` |
+| 音色 | 默认 `voice-120`（大肥鱼，中文女声）。别的音色把 audio.latent.moe 首页条目地址最后那段 slug 填到 `voice.voice` |
+| BGM | 默认**内置合成**（纯合成氛围垫底音，无网络无版权问题，`--mood` 三档）。想用自己的曲子 `--file`；在线音乐站是可选的（设 `MUSIC_BASE`） |
 | `playwright` | 只有出封面要；没装就只出 spec.json，手动补 |
 
 ## 9. 出错先看
@@ -153,6 +155,6 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | 配音报 504 | `render.py` 会自动用 job_id 续取，不用重跑 |
 | 渲染 `x264 malloc failed` | 内存不够，切片已加 `-threads 2`；降低输出分辨率 |
 | 中文变方块 | 系统缺 `Microsoft YaHei`；换 `subtitle.font` |
-| 音乐站连不上 | BGM 留空，或 `MUSIC_BASE` 指自己的实例 |
+| BGM 太闷/太吵 | `--mood calm` 更淡，或 `--file` 换曲子；只想要干净旁白就 `--bgm off` |
 
 深坑清单：`references/lessons.md`（坐标系、反剪顺序、字幕几何）；字幕细节：`references/subtitles.md`；滤镜实现：`references/pipeline.md`；录制参数：`references/capture.md`。
