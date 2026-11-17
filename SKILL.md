@@ -11,7 +11,7 @@ tags: [视频, video, 录屏, 介绍片, ffmpeg, 配音, TTS, 字幕, BGM, 推�
 
 一句话：**给一个录屏，出一条带配音、字幕、推镜、音效、BGM 的 1080p 介绍片 + 封面 + 标题简介。**
 
-本仓库只做编排与渲染，能力全调外部，**不把别人的实现搬进来**：配音 → [latent-media](https://github.com/guohuiyuan/latent-media) 的 `latent.py tts`；配乐 → [go-music-dl](https://github.com/guohuiyuan/go-music-dl) 的服务接口（或用户自己的曲子）；封面 → `playwright` 截本仓库的 HTML 模板。硬依赖只有 `ffmpeg` / `ffprobe`。录屏用 OBS / Recordly / 系统录屏都行（要点见 `references/capture.md`）。
+本仓库只做编排与渲染，能力全调外部，**不把别人的实现搬进来**：配音 → [latent-media](https://github.com/guohuiyuan/latent-media) 的 `latent.py tts`；配乐 → [go-music-dl](https://github.com/guohuiyuan/go-music-dl)（有服务就用服务，没有就把它的官方二进制下到本地缓存起一个临时实例；也可以给用户自己的曲子）；封面 → `playwright` 截本仓库的 HTML 模板。硬依赖只有 `ffmpeg` / `ffprobe`。录屏用 OBS / Recordly / 系统录屏都行（要点见 `references/capture.md`）。
 
 ```
 录屏 ──new──▶ 联系表 + project.json ──script──▶ 文案 ──build──▶ 成片 ──cover──▶ 封面/标题
@@ -33,7 +33,7 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 2. **最多问用户两个问题**：① 这录屏在演示什么、仓库地址是哪个（能从上下文推出来就别问）；② 音色（默认 `voice-120` 大肥鱼，语气在文案里用 `[笑]`/`[轻笑]` 控制，不确定就别换）。
 3. **写文案**：`narration.txt`，一行一段，8–12 行 / 60–80 秒。规则见第 3 节。写完 `python "$R" script <工程>/project.json narration.txt`。
 4. `python "$R" build <工程>/project.json` —— 配音、对齐、推镜、字幕、BGM、渲染一条龙。
-   用户给了曲子就 `--bgm-file <曲子>`；没给且没配 `MUSIC_BASE` 就干声出片，别卡在这。
+   用户给了曲子就 `--bgm-file <曲子>`。没配 `MUSIC_BASE` 也行：会自己把 music-dl 拉到本地起个临时实例（第一次要下 ~13 MB）；实在装不上（离线/没网）就干声出片，别卡在这。
 5. `python "$R" check <工程>/project.json`，再抽帧看图（第 5 节）。
 6. `python "$R" cover <工程>/project.json` 出封面，然后按第 6 节写标题与简介。
 
@@ -52,8 +52,8 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | `plan <project>` | 按旁白时长生成取材骨架 `plan.json` |
 | `cut <project>` | 按 `plan.json` 反剪画面 + 换算推镜点 |
 | `key <lat_tk_xxx>` | 把配音 key 交给 latent-media 保存（转调它的 `keys` 命令） |
-| `bgm <project> [--file 曲子] [-q 关键词] [--pick id] [--source 源] [--off]` | 给你自己的曲子，或从 go-music-dl 搜一段（需 `MUSIC_BASE`，指到 `…/music`） |
-| `build <project> [--preview N] [--force] [--bgm auto\|off]` | 配音 →（有 plan 就反剪）→ 配乐 → 渲染 |
+| `bgm <project> [--file 曲子] [-q 关键词] [--pick id] [--source 源] [--base 地址] [--no-local] [--off]` | 给你自己的曲子，或从 go-music-dl 搜一段。连不上服务时默认现场拉一个本地实例 |
+| `build <project> [--preview N] [--force] [--bgm auto\|off] [--no-local]` | 配音 →（有 plan 就反剪）→ 配乐 → 渲染 |
 | `check <project>` | 交付前自检：stretch、锚点、推镜间距、标版 |
 | `cover <project> [--repo URL] [--sizes 16x9,4x3]` | 抓仓库信息出封面 PNG |
 
@@ -143,7 +143,7 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | latent-media | 必需，配音靠它的 `latent.py tts`（本仓库不内置 TTS）。路径自动找 `~/.workbuddy/skills/latent-media`，或用 `LATENT_CLI` 指定 |
 | 配音 key | 必需，`lat_tk_…`，`rec2video.py key lat_tk_xxx` 交给 latent-media 保管（也可 `LATENT_AUDIO_KEY` 环境变量） |
 | 音色 | 默认 `voice-120`（大肥鱼，中文女声）。别的音色把 audio.latent.moe 条目地址里的 slug 填到 `voice.voice`，用 `latent.py voices -q 关键词` 查 |
-| go-music-dl | 可选，配乐靠它：`music-dl web --no-browser -p 8080` + `MUSIC_BASE`。没有就 `--bgm-file` 给曲子，或干声出片 |
+| go-music-dl | 可选，配乐靠它。有服务就设 `MUSIC_BASE=<host>/music`；没服务不用管，`bgm.py` 会调 `musicdl.py` 把官方 release 下到用户缓存目录（Win: `%LOCALAPPDATA%\rec2video\music-dl`）再起个只听 127.0.0.1 的临时实例。不想联网装：`--no-local` 或 `MUSIC_DL_BIN` 指到已有的可执行文件 |
 | `playwright` | 只有出封面要；没装就只出 spec.json，手动补 |
 
 ## 9. 出错先看
@@ -156,8 +156,9 @@ python "$R" new <录屏> --repo https://github.com/owner/repo   # 体检 + 联�
 | 配音失败 / 找不到 latent.py | 跑 `doctor` 看「配音CLI」；路径不对就设 `LATENT_CLI`，key 失效用 `key lat_tk_xxx` 重灌 |
 | 渲染 `x264 malloc failed` | 内存不够，切片已加 `-threads 2`；降低输出分辨率 |
 | 中文变方块 | 系统缺 `Microsoft YaHei`；换 `subtitle.font` |
-| 音乐站连不上 | `--file` 用自己的曲子，或 `--bgm off` 干声出片 |
+| 音乐站连不上 | 不用管：会自动拉本地 music-dl 起临时实例。要强制不装就 `--no-local`，改用 `--file` 或 `--bgm off` |
 | 取 BGM 报 `400 Missing params` | `MUSIC_BASE` 指向 `<host>/music`；单曲下载必须带 `source`（`bgm.py get <id> <out> --source netease`），编排器会自动从搜索结果里带 |
 | 取 BGM 报 `502` / `未知音源` | 那首歌的直链拿不到或源不支持，换一首或换 `--source`（网易云 `netease`、QQ `qq`、酷狗 `kugou`、酷我 `kuwo`） |
+| 下 music-dl 很慢 / 卡在几 MB | 走代理时单连接可能只有十几 KB/s，脚本会切 4 段并发并整轮重试。实在下不动就手动下 release 里的 `go-music-dl_<平台>_<架构>`，解出可执行文件后用 `MUSIC_DL_BIN` 指过去 |
 
 深坑清单：`references/lessons.md`（坐标系、反剪顺序、字幕几何）；字幕细节：`references/subtitles.md`；滤镜实现：`references/pipeline.md`；录制参数：`references/capture.md`。

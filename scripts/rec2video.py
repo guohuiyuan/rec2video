@@ -17,14 +17,15 @@
     subs     只重出字幕（ass 烧录版 + srt 外挂版）
     plan     按配音时长生成取材骨架 plan.json
     cut      按 plan.json 反剪画面，并把推镜点换算进 project.json
-    bgm      配 BGM：本地曲子，或从 go-music-dl 的服务接口取
+    bgm      配 BGM：本地曲子，或 go-music-dl（没有服务就现场拉一个）
     build    配音 →（可选）反剪 →（可选）配乐 → 渲染成片
     check    交付前自检
     cover    抓仓库信息，出 16:9 + 4:3 封面（playwright 截 HTML）
 
 本仓库只管编排与渲染，能力都调外部：
   配音 → latent-media 的 latent.py（不在本仓库里）
-  配乐 → go-music-dl 的服务接口，或你自己给的曲子
+  配乐 → go-music-dl（有服务就用服务；没服务就下官方 release 到本地起临时实例），
+         或者你自己给的曲子
   封面 → playwright 截本仓库的 HTML 模板
 硬依赖只有 PATH 里的 ffmpeg / ffprobe。
 """
@@ -182,15 +183,26 @@ def cmd_doctor(a) -> None:
         ok = False
 
     base = os.environ.get("MUSIC_BASE")
-    if base:
+    cli = HERE / "musicdl.py"
+    local_bin = ""
+    if cli.is_file():
+        p = subprocess.run([PY, str(cli), "which"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+        local_bin = (p.stdout or "").strip()
+    if base and _music_up(base):
         try:
             n = len(json.loads(tool("bgm.py", "--base", base, "search", "lofi",
                                     "--json", capture=True)).get("rows", []))
             say(f"音乐站    ✓ {base}  返回 {n} 条候选")
         except SystemExit:
-            say(f"音乐站    ✗ {base} 连不上（music-dl web 起了吗？）—— BGM 可留空或 --file 给曲子")
+            say(f"音乐站    ✗ {base} 能开首页但搜不出东西，再看看")
+    elif local_bin:
+        say(f"音乐站    – 没在跑。本地有 music-dl：{local_bin}\n"
+            "         要配乐时会自己起一个临时实例（只听 127.0.0.1），用完关掉")
     else:
-        say("音乐站    – 未配（可选）。要自动配乐：music-dl web 起服务后设 MUSIC_BASE")
+        say("音乐站    – 没在跑，本地也没装 music-dl。\n"
+            "         第一次配乐会从 GitHub release 下一个（约 13 MB，缓存在用户目录）；\n"
+            "         不想联网就 `--file` 给自己的曲子，或加 `--no-local` 关掉自动安装")
 
     py = python_for_cover()
     if py:
@@ -374,6 +386,42 @@ def _timeline_total(base: Path) -> float:
     return 0.0
 
 
+def _music_up(base: str, timeout: float = 3.0) -> bool:
+    """音乐站在不在：首页能取到就算在。"""
+    if not base:
+        return False
+    try:
+        with urllib.request.urlopen(base.rstrip("/") + "/", timeout=timeout) as r:
+            return r.status == 200
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def music_base(explicit: str | None = None, no_local: bool = False) -> tuple[str, bool]:
+    """找一个能用的音乐站，返回 (base, 是不是这次现场拉起来的)。
+
+    顺序：`--base` / `MUSIC_BASE` 指的地方 → 能连上就用；连不上（或压根没配）
+    就调 `musicdl.py serve`：本地有 music-dl 就用，没有就从 GitHub release 下一个，
+    起一个只听 127.0.0.1 的临时实例。`no_local` 时不许联网装，直接报错。
+    """
+    want = (explicit or os.environ.get("MUSIC_BASE") or "").strip().rstrip("/")
+    if want and _music_up(want):
+        return want, False
+    if no_local:
+        die(f"音乐站连不上：{want or '(没配 MUSIC_BASE)'}\n"
+            "    a) 起一个：music-dl web --no-browser -p 8080，再设 "
+            "MUSIC_BASE=http://127.0.0.1:8080/music\n"
+            "    b) 用自己的曲子：bgm <project> --file 曲子.mp3")
+    if want:
+        say(f"[i] {want} 连不上，改用本地 music-dl 实例")
+    else:
+        say("[i] 没配音乐站，用本地 music-dl 实例")
+    out = tool("musicdl.py", "serve", "--json", capture=True)
+    info = json.loads(out.strip().splitlines()[-1])
+    say(f"[i] 音乐站在跑了：{info['base']}（pid {info['pid']}）")
+    return info["base"], not info.get("reused")
+
+
 def cmd_bgm(a) -> None:
     """配乐来自 go-music-dl 的服务，或者你自己给的曲子；本仓库不造音乐。"""
     pj = Path(a.project).resolve()
@@ -396,26 +444,30 @@ def cmd_bgm(a) -> None:
             shutil.copyfile(src, mp3)
         via = f"本地文件 {src.name}"
     else:
-        if not os.environ.get("MUSIC_BASE") and not a.q and not a.pick:
-            die("没配音乐站也没给曲子：\n"
-                "    a) 用自己的曲子：rec2video.py bgm <project> --file 曲子.mp3\n"
-                "    b) 起 go-music-dl 再自动挑：music-dl web --no-browser -p 8080\n"
-                "       然后设 MUSIC_BASE=http://127.0.0.1:8080/music（或 --base）")
-        if a.pick:
-            tool("bgm.py", "get", a.pick, mp3, "--source", a.source)
-            via = f"音乐站 id={a.pick} [{a.source}]"
-        else:
-            keys = a.q or ["upbeat technology", "lofi study", "chill background"]
-            out = tool("bgm.py", "search", *keys, "--json", capture=True)
-            rows = [r for r in json.loads(out).get("rows", []) if r.get("dur", 0) >= 45]
-            if not rows:
-                die("音乐站没搜到合适的：换关键词，或 --file 用自己的曲子")
-            best = max(rows, key=lambda r: r.get("score", 0) + (6 if r["dur"] >= want else 0))
-            m, s = divmod(best["dur"], 60)
-            say(f"[i] 选中 {best['name']} — {best['artist']}  {m}:{s:02d}  "
-                f"id={best['id']} source={best.get('source') or 'netease'}")
-            tool("bgm.py", "get", best["id"], mp3, "--source", best.get("source") or "netease")
-            via = f"音乐站 {best['name'][:20]}"
+        want_base, booted = music_base(a.base, a.no_local)
+        try:
+            if a.pick:
+                tool("bgm.py", "--base", want_base, "--local", "off",
+                     "get", a.pick, mp3, "--source", a.source)
+                via = f"音乐站 id={a.pick} [{a.source}]"
+            else:
+                keys = a.q or ["upbeat technology", "lofi study", "chill background"]
+                out = tool("bgm.py", "--base", want_base, "--local", "off",
+                           "search", *keys, "--json", capture=True)
+                rows = [r for r in json.loads(out).get("rows", []) if r.get("dur", 0) >= 45]
+                if not rows:
+                    die("音乐站没搜到合适的：换关键词，或 --file 用自己的曲子")
+                best = max(rows, key=lambda r: r.get("score", 0) + (6 if r["dur"] >= want else 0))
+                m, s = divmod(best["dur"], 60)
+                say(f"[i] 选中 {best['name']} — {best['artist']}  {m}:{s:02d}  "
+                    f"id={best['id']} source={best.get('source') or 'netease'}")
+                tool("bgm.py", "--base", want_base, "--local", "off",
+                     "get", best["id"], mp3, "--source", best.get("source") or "netease")
+                via = f"音乐站 {best['name'][:20]}"
+        finally:
+            if booted:
+                subprocess.run([PY, str(HERE / "musicdl.py"), "stop"],
+                               capture_output=True, text=True)
 
     proj["bgm"]["src"] = "assets/bgm.mp3"
     proj["bgm"]["volume"] = a.volume
@@ -445,14 +497,17 @@ def cmd_build(a) -> None:
             save(pj, proj)
     elif a.bgm_file:
         cmd_bgm(argparse.Namespace(project=str(pj), q=None, pick=None, off=False,
-                                   file=a.bgm_file, volume=0.26))
+                                   file=a.bgm_file, volume=0.26, source="netease",
+                                   base=None, no_local=False))
     elif not have_bgm:
-        if os.environ.get("MUSIC_BASE"):
+        try:
             cmd_bgm(argparse.Namespace(project=str(pj), q=None, pick=None, off=False,
-                                       file=None, volume=0.26))
-        else:
-            say("[i] 没有 BGM：配一个就 `bgm <project> --file 曲子.mp3`，"
-                "或起 music-dl 后设 MUSIC_BASE。这次先干声出片")
+                                       file=None, volume=0.26, source="netease",
+                                       base=None, no_local=getattr(a, "no_local", False)))
+        except SystemExit as exc:
+            if exc.code:
+                say("[!] 配乐没做成，这次干声出片"
+                    "（要曲子：`bgm <project> --file 曲子.mp3`）")
 
     args = ["run", pj] + (["--force"] if a.force else [])
     if a.preview:
@@ -586,6 +641,9 @@ def main() -> None:
     b.add_argument("--pick", help="直接指定音乐站 id")
     b.add_argument("--source", default="netease",
                    help="配合 --pick：曲子的来源（search 结果里的 source 字段）")
+    b.add_argument("--base", help="音乐站地址，默认取 MUSIC_BASE")
+    b.add_argument("--no-local", action="store_true",
+                   help="音乐站连不上时不要现场拉 music-dl（默认会去 GitHub release 下）")
     b.add_argument("--file", help="用本地曲子（最省事）")
     b.add_argument("--off", action="store_true", help="关掉 BGM")
     b.add_argument("--volume", type=float, default=0.26)
@@ -598,6 +656,8 @@ def main() -> None:
     d.add_argument("--bgm", choices=["auto", "off"], default="auto",
                    help="auto=工程里有 BGM 或配了音乐站就用；off=不要 BGM")
     d.add_argument("--bgm-file", help="用自己的曲子（复制进 assets/bgm.mp3）")
+    d.add_argument("--no-local", action="store_true",
+                   help="配乐时不要现场拉 music-dl（默认连不上就去 GitHub release 下）")
     d.set_defaults(func=cmd_build)
 
     k = sub.add_parser("check", help="交付前自检")

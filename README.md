@@ -98,7 +98,7 @@ python scripts/rec2video.py subs demo/project.json     # 只重出字幕，改�
 |---|---|---|
 | `ffmpeg` / `ffprobe` | ✅ | 进 PATH 即可，唯一的硬依赖 |
 | [latent-media](https://github.com/guohuiyuan/latent-media) | ✅ | 配音靠它：本仓库只调它的 `latent.py tts`，不内置 TTS。装好后 `rec2video.py key lat_tk_xxx` 把 key 交给它保管 |
-| [go-music-dl](https://github.com/guohuiyuan/go-music-dl) | – | 配乐靠它：`music-dl web --no-browser -p 8080` 起服务，`MUSIC_BASE` 指过去；不想接就把曲子 `--file` 丢进来 |
+| [go-music-dl](https://github.com/guohuiyuan/go-music-dl) | – | 配乐靠它。有服务就 `MUSIC_BASE` 指过去；没有也不用管，`bgm` 会把官方 release 下到本地缓存、起个只听 127.0.0.1 的临时实例，用完关掉。不想联网装就 `--no-local` 或 `MUSIC_DL_BIN` 指到已有可执行文件 |
 | `playwright` | – | 出封面要：`pip install playwright`（复用本机 Edge），不装就只出 `spec.json` |
 
 ```bash
@@ -106,11 +106,31 @@ git clone https://github.com/guohuiyuan/latent-media ~/.workbuddy/skills/latent-
 python scripts/rec2video.py key lat_tk_xxx     # 把 key 交给 latent-media 保管
 ```
 
-配乐可选，接了 go-music-dl 才有自动挑曲：
+配乐可选，三条路随便挑一条：
 
 ```bash
-music-dl web --no-browser -p 8080
+# 1) 你已经起了服务：指过去就行
 export MUSIC_BASE=http://127.0.0.1:8080/music
+
+# 2) 什么都没起：让脚本自己把 music-dl 拉到本地起一个临时实例（第一次约 13 MB）
+python scripts/rec2video.py bgm demo/project.json
+
+# 3) 用自己的曲子
+python scripts/rec2video.py bgm demo/project.json --file 曲子.mp3
+```
+
+第 2 条走的是官方 release（带 `checksums.txt` 校验），二进制缓存在用户目录：
+Windows `%LOCALAPPDATA%\rec2video\music-dl`、macOS `~/Library/Caches/rec2video/music-dl`、
+Linux `~/.cache/rec2video/music-dl`。服务只监听 `127.0.0.1` 的随机端口，BGM 取到就关。
+
+单独的二进制管理也有命令：
+
+```bash
+python scripts/musicdl.py which      # 现在用的是哪个可执行文件
+python scripts/musicdl.py ensure     # 确保有（没有就下）
+python scripts/musicdl.py serve      # 起服务，打印 base
+python scripts/musicdl.py status     # 还在不在
+python scripts/musicdl.py stop
 ```
 
 ## 目录
@@ -121,6 +141,7 @@ scripts/rec2video.py      # 编排器（doctor/new/script/plan/cut/bgm/build/che
 scripts/screencut.py      # 扫描联系表 / 反剪 / 推镜坐标换算 / 自检
 scripts/render.py         # 配音 / 字幕 / 推镜音效 / 混音 / 编码
 scripts/bgm.py            # go-music-dl 的 HTTP 客户端（找 / 下 BGM）
+scripts/musicdl.py        # 本地 music-dl 二进制：找 / 下载 release / 起停服务
 scripts/cover.py          # HTML 模板 + 浏览器截图出封面
 assets/templates/         # 封面模板（横版 repo-page / 竖版 hero）
 references/               # capture 录制 · subtitles 字幕 · lessons 深坑 · pipeline 滤镜实现
@@ -134,7 +155,7 @@ examples/recordly-intro/  # 12 段精剪实例：project.json / plan.json / narr
 **依赖关系写清楚**：本仓库只有编排、剪辑、字幕、混音、封面模板这些自己的代码，其它能力一律调外部，不复制别人的实现进来——
 
 - 配音 → [latent-media](https://github.com/guohuiyuan/latent-media)（`latent.py tts`，需要它自己的 key）
-- 配乐 → [go-music-dl](https://github.com/guohuiyuan/go-music-dl)（它的 web 服务接口），或你自己的曲子
+- 配乐 → [go-music-dl](https://github.com/guohuiyuan/go-music-dl)（它的 web 服务接口；没服务时下它的官方 release 到本地缓存临时起一个），或你自己的曲子
 - 封面渲染 → `playwright`（截本仓库的 HTML 模板）
 - 录屏 → OBS / [Recordly](https://github.com/webadderallorg/Recordly)，纯工具，怎么录都行
 
