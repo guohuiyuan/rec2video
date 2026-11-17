@@ -109,3 +109,18 @@ python scripts/rec2video.py build  demo/project.json
 
 但别为了稳定把第一段推到和后面重复的位置——三段画面一模一样，观众会以为卡了。稳定点和「画面有推进」之间要取平衡：宁可第一段短一点（5s 左右），也不要 7 秒都停在同一屏。
 
+## 十一、标题改了，封面和简介不会自己跟着改
+
+标题、封面大字、口播首句、简介首句是同一个东西的四种说法（`SKILL.md` 3.4）。**没有任何命令会把它们串起来重算**，改标题时四处都得手动过一遍：
+
+| 产物 | 怎么改 |
+|---|---|
+| 封面大字 | 改 `cover/spec.json` 的 `title_cn` / `desc`，再 `cover.py render cover/spec.json -o cover -s 16x9,4x3` |
+| 口播第一段 | 改 `narration.txt` 第一行 → `script` → `tts`（指纹变了自动重配）→ `cut` → `build` |
+| 简介首句 | 手写，按标题同义复述 |
+
+两个坑：
+
+- **别用 `rec2video.py cover` 改文案**。它会重抓仓库信息、**整个覆盖 `spec.json`**，手写的 `title_cn` 直接没了。重出封面只该用 `cover.py render <已有的 spec.json>`。
+- **`cover.py` 依赖 playwright**，WorkBuddy 托管的 python 通常没装。用装了的那一个跑（本机是 `C:\Users\guohuiyuan\miniconda3\python.exe`），否则会静默只出 `spec.json`。
+
