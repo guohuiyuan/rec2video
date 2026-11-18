@@ -43,10 +43,12 @@ python scripts/rec2video.py new ~/Videos/demo.mp4 \
 python scripts/rec2video.py build demo/project.json      # 出片
 ```
 
-中间只差一件事：**文案**。写 `narration.txt`（先定标题，第一段就是标题的口语版；一行一段，8–12 行 / 60–80 秒）后 `script` 灌进去，agent 会自动做这一步。
+中间只差一件事：**文案**。写 `narration.txt`（**先把发布标题写进 `project.json` 的 `title`**，第一段就是标题的口语版；一行一段，8–12 行 / 60–80 秒）后 `script` 灌进去，agent 会自动做这一步。
 
 ```bash
-python scripts/rec2video.py script demo/project.json narration.txt
+python scripts/rec2video.py script demo/project.json narration.txt --title "好家伙！Github又出狠活神器！…"
+                                                                 # ← 灌文案，顺手验首句有没有复述标题
+python scripts/rec2video.py hook   demo/project.json            # 只验这一条（标题没落盘 / 项目名 / 数字 / 字面重合）
 python scripts/rec2video.py build  demo/project.json            # 配音+对齐+推镜+字幕+BGM+渲染
 python scripts/rec2video.py check  demo/project.json            # 交付前自检
 python scripts/rec2video.py cover  demo/project.json            # 封面（playwright 截 HTML 模板）
@@ -79,7 +81,9 @@ OBS、Recordly、`Win+Alt+R`、`⇧⌘5` 都能用，参数与取舍见 [`refere
 
 ## 文案：先定标题，第一句复述标题
 
-观众是被标题带进来的，前三秒只干一件事：**让他确认「我点对了」，并且立刻知道这是什么。** 所以顺序是——先定标题（第 7 节那种带「神器」「斩获 Xk Stars」的发布标题，不是自己概括的白描），再把标题翻成口语当第一段，最后往下写正文。手上没有标题原句就别动笔，否则第一段只能靠痛点铺垫，开头必软。
+观众是被标题带进来的，前三秒只干一件事：**让他确认「我点对了」，并且立刻知道这是什么。** 所以顺序是——先定标题（第 7 节那种带「神器」「斩获 Xk Stars」的发布标题，不是自己概括的白描），**把标题原文写进 `project.json` 的 `title`**，再把标题翻成口语当第一段，最后往下写正文。手上没有标题原句就别动笔，否则第一段只能靠痛点铺垫，开头必软。
+
+标题落盘不只是存档：`script` 和 `hook` 会拿它机检首句（项目名 / 数字 / 字面重合），不过就判 ✗。详见 [`references/hook.md`](references/hook.md) 第七节。
 
 ```
 好家伙！Github又出狠活神器！14 个音乐源塞进一个搜索框，斩获 6.5k Stars，网易云、QQ、酷狗、酷我全支持
@@ -97,11 +101,11 @@ OBS、Recordly、`Win+Alt+R`、`⇧⌘5` 都能用，参数与取舍见 [`refere
 
 第一段配的画面必须是最完整的全貌，不能落在加载中、弹窗、滚动半路。情绪只放头和尾，中间老老实实讲功能。
 
-七个可直接套的开场模板（含神器体复述）、情绪词能／不能清单、六条自检 → [`references/hook.md`](references/hook.md)
+七个可直接套的开场模板（含神器体复述）、情绪词能／不能清单、机器校验 + 七条自检 → [`references/hook.md`](references/hook.md)
 
 ### 四处对齐：标题 / 封面大字 / 口播首句 / 简介首句
 
-同一个片子有四个地方在说「这是什么」。对齐的是**口径**不是字面——核心数字（14 个音乐源 / 6.5k Stars）、核心名词（一个搜索框）、定性（开源 / Go 写的 / 本地跑）必须一致，句式各写各的。
+同一个片子有四个地方在说「这是什么」。对齐的是**口径**不是字面——核心数字（14 个音乐源 / 6.5k Stars）、核心名词（一个搜索框）、定性（开源 / Go 写的 / 本地跑）必须一致，句式各写各的。`project.json` 的 `title` 是唯一源头，另外三处从它派生。
 
 | 位置 | 写法 | 字数 |
 |---|---|---|
@@ -133,7 +137,7 @@ python scripts/rec2video.py subs demo/project.json     # 只重出字幕，改�
 |---|---|---|
 | `ffmpeg` / `ffprobe` | ✅ | 进 PATH 即可，唯一的硬依赖 |
 | [latent-media](https://github.com/guohuiyuan/latent-media) | ✅ | 配音靠它：本仓库只调它的 `latent.py tts`，不内置 TTS。装好后 `rec2video.py key lat_tk_xxx` 把 key 交给它保管 |
-| [go-music-dl](https://github.com/guohuiyuan/go-music-dl) | – | 配乐靠它。有服务就 `MUSIC_BASE` 指过去；没有也不用管，`bgm` 会把官方 release 下到本地缓存、起个只听 127.0.0.1 的临时实例，用完关掉。不想联网装就 `--no-local` 或 `MUSIC_DL_BIN` 指到已有可执行文件 |
+| [go-music-dl](https://github.com/guohuiyuan/go-music-dl) | – | 配乐靠它。有服务就 `MUSIC_BASE` 指过去；没有也不用管，`bgm` 会把**最新**官方 release 下到本地缓存（版本对不上 latest 就弃用，PATH 上的老版不吃）、起个只听 127.0.0.1 的临时实例，用完关掉。不想联网装就 `--no-local` 或 `MUSIC_DL_BIN` 指到已有可执行文件 |
 | `playwright` | – | 出封面要：`pip install playwright`（复用本机 Edge），不装就只出 `spec.json` |
 
 ```bash
@@ -158,11 +162,13 @@ python scripts/rec2video.py bgm demo/project.json --file 曲子.mp3
 Windows `%LOCALAPPDATA%\rec2video\music-dl`、macOS `~/Library/Caches/rec2video/music-dl`、
 Linux `~/.cache/rec2video/music-dl`。服务只监听 `127.0.0.1` 的随机端口，BGM 取到就关。
 
+**只认 latest**：以 release 的 `tag_name` 为准，机器上那个二进制版本号对不上就不用了（PATH 里塞着老的 TUI 版 v1.3.x 是最常见的情况——它的 `web` 页面挂在 `/`，没有 `/music/api/*`），自动下最新的。想钉死某一份：`MUSIC_DL_BIN`；想将就用手上那份：`--any`。
+
 单独的二进制管理也有命令：
 
 ```bash
-python scripts/musicdl.py which      # 现在用的是哪个可执行文件
-python scripts/musicdl.py ensure     # 确保有（没有就下）
+python scripts/musicdl.py which      # 现在用的是哪个可执行文件 + 版本对不对
+python scripts/musicdl.py ensure     # 确保有，且是 latest（--force 重下，--any 不挑版本）
 python scripts/musicdl.py serve      # 起服务，打印 base
 python scripts/musicdl.py status     # 还在不在
 python scripts/musicdl.py stop

@@ -125,3 +125,29 @@ python scripts/rec2video.py build  demo/project.json
 - **别用 `rec2video.py cover` 改文案**。它会重抓仓库信息、**整个覆盖 `spec.json`**，手写的 `title_cn` 直接没了。重出封面只该用 `cover.py render <已有的 spec.json>`。
 - **`cover.py` 依赖 playwright**，WorkBuddy 托管的 python 通常没装。用装了的那一个跑（本机是 `C:\Users\guohuiyuan\miniconda3\python.exe`），否则会静默只出 `spec.json`。
 
+## 十二、标题不落盘 = 没有标题
+
+前几版把「先定标题、第一句复述标题」写在 SKILL 里，实际交付还是翻车：标题只活在对话里，`project.json` 没有字段装它，于是没有任何东西能验首句——写顺了是运气，写歪了也没人拦。
+
+修法是把标题变成工程数据：
+
+- `project.json` 加 `title`（发布标题原文）。`new --title` / `script --title` 都能写。
+- `scripts/hookcheck.py` 拿 `title` 和 `segments[0]` 比四件事：标题在不在、项目名、数字、3-gram 字面重合。
+- `script`、`check` 自动跑，另外单开 `hook` 子命令（✗ 时退出码 2）。
+- 比对前先挖掉 `[笑]` 气声标记和 `好家伙/神器/狠活/斩获/Github/Stars` 这类套话——复述允许丢套话，不该因此判不及格。
+
+实测：anything-analyzer 那条片标题写了「斩获 3.9k Stars」，首句只有「抓包、MITM、指纹伪装…神器」，数字一个都没落——这种漏，肉眼对着两段文字看三遍也未必发现，机器一秒就报出来。
+
+**教训**：凡是"规则"都该有个字段装它、有个命令验它。只写进文档的规则，下一次一定漏。
+
+## 十三、music-dl 不能"有就用"，得认版本
+
+`ensure()` 原来先 `shutil.which()`，于是本机 PATH 上的 `music-dl.exe`（v1.3.1，老 TUI 构建）永远优先——版本号还比 release 的 `v1.1.7` 大，怎么比都是"更新"。
+
+实际状况是两条产品线：老的 TUI 版把 web 页面挂在 `/`，没有 `/music/api/*`；新 release 才有 `/music/` 那套接口。光看"进程起来了"发现不了，取 BGM 时才 404。
+
+- 判据改成**版本号等于 release 的 `tag_name`**，不是"谁大用谁"。
+- 缓存的官方二进制排在 PATH 前面（`find_bin()` 顺序：`MUSIC_DL_BIN` > 缓存 > PATH）。
+- `installed.json` 记下装的是哪个 tag，免得每次跑都去 `--version` 问一遍。
+- `release.json` 缓存 latest 信息 6 小时，代理挂了不至于每次卡在网络超时上。
+- 想钉死某份：`MUSIC_DL_BIN`（会提示版本不符）；想将就：`--any`。

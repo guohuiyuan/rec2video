@@ -11,7 +11,8 @@
 子命令
     doctor   体检环境（ffmpeg / 配音 CLI / BGM 站 / 封面引擎）
     new      建工程：探测录屏、抽带时间戳联系表、写 project.json 预设
-    script   把 txt 文案（一行一段）灌进 project.json
+    script   把 txt 文案（一行一段）灌进 project.json，并验首句有没有复述标题
+    hook     只验这一条：首句复述发布标题（title / 项目名 / 数字 / 字面重合）
     info     看录屏参数 + 抽帧
     tts      配音 + 时间轴
     subs     只重出字幕（ass 烧录版 + srt 外挂版）
@@ -50,6 +51,10 @@ for _s in (sys.stdout, sys.stderr):
         _s.reconfigure(encoding="utf-8")
     except Exception:
         pass
+
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+import hookcheck  # noqa: E402  同目录的「首句有没有复述标题」校验
 
 
 # ---------------------------------------------------------------- 小工具
@@ -274,6 +279,7 @@ def cmd_new(a) -> None:
     fw, fh = FRAME["w"], FRAME["h"]
     proj = {
         "name": name,
+        "title": a.title or "",
         "repo": a.repo or "",
         "mode": "short" if info["duration"] <= 150 else "long",
         "video": {"src": str(src), "trim_head": 0, "crop": crop,
@@ -307,8 +313,10 @@ def cmd_new(a) -> None:
         f"配音 {a.voice}  模式 {proj['mode']}")
     say(f"    联系表 {out_dir / 'scan'}（每格烧了原片绝对时间，先看它）")
     if not proj["segments"]:
-        say("\n下一步：写文案（一行一段，8–12 行 / 60–80 秒），然后")
-        say(f"    python scripts/rec2video.py script {pj} narration.txt")
+        say("\n下一步：**先把发布标题写进 title**（口播第一段要复述它），再写文案")
+        say(f"    python scripts/rec2video.py script {pj} narration.txt --title \"好家伙！...\"")
+    if not proj.get("title"):
+        say("    [!] title 还空着：没有标题，首句复述就没法校验（script / hook 会报 ✗）")
     say(f"    python scripts/rec2video.py build  {pj}")
 
 
@@ -317,11 +325,35 @@ def cmd_new(a) -> None:
 def cmd_script(a) -> None:
     pj = Path(a.project).resolve()
     proj = load(pj)
+    if getattr(a, "title", None):
+        proj["title"] = a.title.strip()
     proj["segments"] = parse_script(Path(a.txt).expanduser())
     save(pj, proj)
     say(f"[+] {len(proj['segments'])} 段已写入 {pj.name}")
     for i, s in enumerate(proj["segments"], 1):
         say(f"    {i:>2}. {s['sub'][:38]}")
+    report_hook(proj, pj)
+
+
+def report_hook(proj: dict, pj: Path | None = None, title: str | None = None) -> bool:
+    """当场验一遍：第一句有没有复述发布标题。"""
+    res = hookcheck.check(proj, title)
+    say("")
+    say("文案  首句复述标题")
+    for line in hookcheck.render(res):
+        say(line)
+    if not res["ok"]:
+        tip = ("      → 先把发布标题写进 project.json 的 title（或 script --title），首句再复述它"
+               if not res["title"] else "      → 改第一段，别往下配")
+        say(tip)
+    return bool(res["ok"])
+
+
+def cmd_hook(a) -> None:
+    pj = Path(a.project).resolve()
+    proj = load(pj)
+    if not report_hook(proj, pj, getattr(a, "title", None)):
+        raise SystemExit(2)
 
 
 def cmd_info(a) -> None:
@@ -533,6 +565,8 @@ def cmd_check(a) -> None:
             f"{info['size'] / 1048576:.1f}MB")
     else:
         say("成片  还没渲染")
+    report_hook(proj, pj)
+    say("")
     caps = proj.get("caption") or {}
     say(f"标版  片头「{caps.get('start', '') or '(空)'}」／片尾「{caps.get('end', '') or '(空)'}」")
     say("      数字口径：封面、标题、简介、口播里的 star 数/功能数必须一致")
@@ -586,7 +620,7 @@ def main() -> None:
         prog="rec2video",
         description="一段录屏 → 一条能发布的介绍片（配音/字幕/推镜/音效/BGM/封面）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="典型流程：new → script → build → check → cover")
+        epilog="典型流程：new --title → script（顺手验首句）→ build → check → cover")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("doctor", help="体检环境").set_defaults(func=cmd_doctor)
@@ -596,6 +630,7 @@ def main() -> None:
     n.add_argument("-d", "--dir", help="工程目录（默认 ./<录屏名>）")
     n.add_argument("--name", help="工程名，也是成片文件名")
     n.add_argument("--repo", help="GitHub 仓库地址（填片尾标版 + 封面）")
+    n.add_argument("--title", help="发布标题原文（口播第一段要复述它，先定标题再写文案）")
     n.add_argument("--voice", default="voice-120", help="音色 slug，默认 voice-120（大肥鱼）")
     n.add_argument("--script", help="文案 txt（一行一段），建工程时一起灌进去")
     n.add_argument("--force", action="store_true")
@@ -604,7 +639,13 @@ def main() -> None:
     s = sub.add_parser("script", help="把 txt 文案灌进 project.json")
     s.add_argument("project")
     s.add_argument("txt")
+    s.add_argument("--title", help="顺手把发布标题写进 project.json 的 title")
     s.set_defaults(func=cmd_script)
+
+    hk = sub.add_parser("hook", help="查首句有没有复述发布标题")
+    hk.add_argument("project")
+    hk.add_argument("--title", help="临时给一个标题（不写回 project.json）")
+    hk.set_defaults(func=cmd_hook)
 
     i = sub.add_parser("info", help="录屏参数 + 抽帧")
     i.add_argument("project")

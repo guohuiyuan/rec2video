@@ -13,7 +13,10 @@
 服务起在本机临时目录下的 `data/` 里，不碰你的音乐库。
 
 下载源是官方 release（github.com/guohuiyuan/go-music-dl），带 checksums.txt 校验。
-不想联网装：设 `MUSIC_DL_BIN` 指到已有的 music-dl 可执行文件即可。
+**认版本**：release 的 latest tag 是唯一标准，机器上那个可执行文件只要不是这个
+tag（比如 PATH 里还是老的 TUI 版 v1.3.x），就弃用、改用官方 latest —— 老版的
+`web` 页面挂在 `/` 上、没有 `/music/api/*`，接口对不上。
+不想联网装：设 `MUSIC_DL_BIN` 指到已有的 music-dl 可执行文件即可（会提示版本不符）。
 """
 from __future__ import annotations
 
@@ -22,6 +25,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import subprocess
@@ -39,6 +43,8 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; rec2video-bgm/1.0)",
 EXE = ".exe" if os.name == "nt" else ""
 STATE = "server.json"
 LOG = "music-dl-web.log"
+RELEASE = "release.json"
+INSTALLED = "installed.json"
 
 
 # ---------------------------------------------------------------- 位置
@@ -59,19 +65,92 @@ def cached_bin() -> Path:
     return cache_dir() / f"music-dl{EXE}"
 
 
+def which_bin() -> Path | None:
+    for name in (f"music-dl{EXE}", "music-dl"):
+        hit = shutil.which(name)
+        if hit:
+            return Path(hit)
+    return None
+
+
 def find_bin() -> Path | None:
-    """已有可执行文件：显式指定 > PATH > 缓存。"""
+    """手上现成的可执行文件，不联网：显式 > 缓存 > PATH。
+
+    缓存排在 PATH 前面：缓存里那份一定是官方 release 下的，而 PATH 上可能是
+    老的 TUI 版（`web` 页面挂在 `/`，没有 `/music/api/*`，接口对不上）。
+    """
     env = os.environ.get("MUSIC_DL_BIN")
     if env:
         p = Path(env).expanduser()
         if p.is_file():
             return p.resolve()
-    for name in (f"music-dl{EXE}", "music-dl"):
-        hit = shutil.which(name)
-        if hit:
-            return Path(hit)
     p = cached_bin()
-    return p if p.is_file() else None
+    if p.is_file():
+        return p
+    return which_bin()
+
+
+def candidates() -> list[Path]:
+    """所有能拿到的可执行文件，显式 > 缓存 > PATH，去重。"""
+    env = os.environ.get("MUSIC_DL_BIN")
+    out: list[Path] = []
+    for p in (Path(env).expanduser() if env else None, cached_bin(), which_bin()):
+        if p and p.is_file():
+            r = p.resolve()
+            if r not in out:
+                out.append(r)
+    return out
+
+
+# ---------------------------------------------------------------- 版本
+
+def _norm_ver(s: str) -> str:
+    m = re.search(r"v?(\d+(?:\.\d+){1,3})", s or "")
+    return f"v{m.group(1)}" if m else ""
+
+
+def bin_version(exe: Path) -> str:
+    """跑一次问版本；问不到就返回空（不同版本认的旗标不一样）。"""
+    for args in (["--version"], ["-v"], ["version"]):
+        try:
+            r = subprocess.run([str(exe), *args], capture_output=True, text=True,
+                               errors="replace", timeout=20)
+        except Exception:  # noqa: BLE001
+            continue
+        v = _norm_ver((r.stdout or "") + (r.stderr or ""))
+        if v:
+            return v
+    return ""
+
+
+def installed_tag() -> str:
+    try:
+        return json.loads((cache_dir() / INSTALLED).read_text(encoding="utf-8")).get("tag", "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def release_meta(refresh: bool = False) -> dict:
+    """latest release 的 tag 与资产表。缓存 6 小时，离线时退回上次记下的。"""
+    p = cache_dir() / RELEASE
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        data = {}
+    fresh = bool(data.get("tag")) and time.time() - float(data.get("fetched") or 0) < 6 * 3600
+    if fresh and not refresh:
+        return data
+    try:
+        meta = json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest").decode("utf-8"))
+        data = {"tag": meta.get("tag_name", ""), "fetched": time.time(),
+                "assets": {a["name"]: a["browser_download_url"] for a in meta.get("assets", [])}}
+        cache_dir().mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+        return data
+    except Exception as exc:  # noqa: BLE001
+        if data.get("tag"):
+            print(f"[!] 查不到 latest release（{exc}），按上次记下的 {data['tag']} 走", flush=True)
+        return data or {"tag": "", "fetched": 0, "assets": {}}
 
 
 # ---------------------------------------------------------------- 下载
@@ -239,14 +318,13 @@ def _fetch(url: str, timeout: int = 60, what: str = "下载", conns: int = 4,
 
 def _asset_urls(suffix: str) -> tuple[str, str]:
     """返回 (二进制下载地址, 版本号)。"""
-    meta = json.loads(_get(f"https://api.github.com/repos/{REPO}/releases/latest").decode("utf-8"))
-    tag = meta.get("tag_name", "?")
-    want = f"go-music-dl_{suffix}"
-    for a in meta.get("assets", []):
-        if a.get("name") == want:
-            return a["browser_download_url"], tag
-    names = ", ".join(a.get("name", "") for a in meta.get("assets", []))
-    raise SystemExit(f"[!] 这个平台的 release 里没有 {want}；有的：{names}")
+    meta = release_meta()
+    tag = meta.get("tag") or "?"
+    url = (meta.get("assets") or {}).get(f"go-music-dl_{suffix}")
+    if url:
+        return url, tag
+    names = ", ".join(list(meta.get("assets") or {})[:12])
+    raise SystemExit(f"[!] 这个平台的 release 里没有 go-music-dl_{suffix}；有这些：{names}")
 
 
 def _sha256(data: bytes) -> str:
@@ -288,26 +366,23 @@ def _extract(blob: bytes, suffix: str, workdir: Path) -> Path:
     return out
 
 
-def ensure(quiet: bool = False, force: bool = False) -> Path:
-    have = find_bin()
-    if have and not force:
-        if not quiet:
-            print(f"[i] 用现成的 music-dl：{have}")
-        return have
+def _download(tag: str = "", quiet: bool = False) -> Path:
     suffix = asset_name()
     if not suffix:
         raise SystemExit(f"[!] 不认识的平台 {platform.system()}/{platform.machine()}："
                          "自己下 music-dl 并设 MUSIC_DL_BIN")
     d = cache_dir()
     d.mkdir(parents=True, exist_ok=True)
+    if not tag:
+        tag = release_meta(refresh=True).get("tag", "")
     bin_url, tag = _asset_urls(suffix)
     if not quiet:
-        print(f"[i] 本地没有 music-dl，去 GitHub release 下一个：{tag} {suffix}", flush=True)
+        print(f"[i] 下官方 release {tag} 的 {suffix}", flush=True)
         print(f"    {bin_url}", flush=True)
     # checksums.txt 与二进制同一个 release，用它校验完整性
     sum_url = bin_url.rsplit("/", 1)[0] + "/go-music-dl_checksums.txt"
     try:
-        sums = _get(sum_url, timeout=30, what="校验文件").decode("utf-8", "replace")
+        sums = _get(sum_url, timeout=30).decode("utf-8", "replace")
     except Exception:  # noqa: BLE001  老版本可能没有校验文件
         sums = ""
     blob = _fetch(bin_url, timeout=600, what="music-dl")
@@ -320,9 +395,60 @@ def ensure(quiet: bool = False, force: bool = False) -> Path:
     if want and _sha256(blob) != want:
         raise SystemExit("[!] checksums.txt 校验不过，安装包可能下坏了，重试一次")
     target = _extract(blob, suffix, d)
+    (d / INSTALLED).write_text(
+        json.dumps({"tag": tag, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False),
+        encoding="utf-8")
     if not quiet:
         print(f"[+] music-dl {tag} → {target}")
     return target
+
+
+def ensure(quiet: bool = False, force: bool = False, any_version: bool = False) -> Path:
+    """给一个能用的 music-dl，**默认只要 release 的 latest**。
+
+    手上那个如果版本号对不上 latest（PATH 上还是老的 TUI 版 v1.3.x 最典型），
+    直接弃用、下最新的——老版 `web` 页面挂在 `/`、没有 `/music/api/*`，
+    光看"进程能起来"是发现不了的，取 BGM 时才 404。
+    `any_version=True` 时不挑版本，手上有什么用什么。
+    """
+    env = os.environ.get("MUSIC_DL_BIN")
+    if env and Path(env).expanduser().is_file():
+        p = Path(env).expanduser().resolve()
+        v = bin_version(p)
+        if not quiet:
+            print(f"[i] 用 MUSIC_DL_BIN 指定的 {p}" + (f"（{v}）" if v else ""))
+        tag = "" if any_version else release_meta().get("tag", "")
+        if tag and v and v != tag:
+            print(f"[!] 它不是 latest（{tag}），接口可能对不上；"
+                  f"想自动用最新版就清掉 MUSIC_DL_BIN", flush=True)
+        return p
+
+    tag = "" if any_version else release_meta().get("tag", "")
+
+    if tag and not force:
+        if installed_tag() == tag and cached_bin().is_file():
+            if not quiet:
+                print(f"[i] 用缓存里的官方 release {tag}：{cached_bin()}")
+            return cached_bin()
+        for p in candidates():
+            if bin_version(p) == tag:
+                if not quiet:
+                    print(f"[i] 用 {p}（{tag} = latest）")
+                return p
+        if not quiet and candidates():
+            old = "，".join(f"{p.name} {bin_version(p) or '版本不明'}"
+                           for p in candidates())
+            print(f"[i] 手上没有 latest {tag}（{old}），去 GitHub release 取", flush=True)
+        return _download(tag, quiet=quiet)
+
+    # 不知道 latest（离线 / --any / --force 兜底）：缓存 → PATH，并说清版本
+    p = find_bin()
+    if p:
+        v = bin_version(p)
+        if not quiet:
+            print(f"[!] 没查 latest release，先用手上的 {p}" + (f"（{v}）" if v else ""))
+        return p
+    return _download(tag, quiet=quiet)
 
 
 # ---------------------------------------------------------------- 起服务
@@ -414,38 +540,42 @@ def _kill(proc: subprocess.Popen) -> None:
         pass
 
 
-def serve(port: int | None = None, wait: int = 60, keep: bool = False) -> dict:
+def serve(port: int | None = None, wait: int = 60, keep: bool = False,
+          any_version: bool = False) -> dict:
     """起一个本地 web 服务；已经有活的就直接复用。
 
-    先试手上那个可执行文件；如果它起来但 `/music/` 404（比如 PATH 上是
-    老的 TUI 版，页面挂在 `/`、没有 `/music/api/*`），就换官方 release 再试一次。
+    先用 `ensure()` 选出来的（默认就是 latest）；万一它起不来（下不到最新版、
+    或者手上那个换了最新版反而有坑），再拿别的候选挨个试一遍。
     """
     st = read_state()
     if st.get("pid") and st.get("port") and alive(int(st["pid"])) and is_up(int(st["port"])):
         return {"base": st["base"], "port": int(st["port"]), "pid": int(st["pid"]), "reused": True}
 
-    exe = ensure()
+    exe = ensure(any_version=any_version)
     port = port or free_port()
     d = cache_dir()
     d.mkdir(parents=True, exist_ok=True)
 
+    tried: list[tuple[Path, str]] = []
     proc = _spawn(exe, port, d)
-    ok, why = _await(proc, port, min(wait, 15), d)      # 先给 15s，接口不兼容时别干等
+    ok, why = _await(proc, port, min(wait, 20), d)      # 先给 20s，接口不兼容时别干等
     if not ok:
         _kill(proc)
-        official = cached_bin()
-        if exe.resolve() != official.resolve():
-            if official.is_file():            # 缓存里已有官方版，别重下
-                exe = official
-                print(f"[!] {exe.name} 接口对不上（{why}），换缓存的官方版再试", flush=True)
-            else:
-                print(f"[!] {exe.name} 接口对不上（{why}），下个官方 release 再试", flush=True)
-                exe = ensure(force=True)
-            proc = _spawn(exe, port, d)
+        tried.append((exe, why))
+        for other in candidates():
+            if other == exe.resolve():
+                continue
+            print(f"[!] {exe.name} 起不来/接口对不上（{why}），换 {other} 再试", flush=True)
+            proc = _spawn(other, port, d)
             ok, why = _await(proc, port, wait, d)
+            if ok:
+                exe = other
+                break
+            _kill(proc)
+            tried.append((other, why))
     if not ok:
-        _kill(proc)
-        raise SystemExit(f"[!] music-dl web 起不来：{why}\n    日志：{d / LOG}")
+        detail = "\n".join(f"    - {p}：{r}" for p, r in tried) or f"    - {why}"
+        raise SystemExit(f"[!] music-dl web 起不来：\n{detail}\n    日志：{d / LOG}")
 
     base = f"http://127.0.0.1:{port}/music"
     state = {"base": base, "port": port, "pid": proc.pid,
@@ -479,14 +609,16 @@ def main() -> None:
 
     sub.add_parser("which", help="打印要用的二进制路径")
 
-    e = sub.add_parser("ensure", help="确保本地有二进制（没有就下）")
-    e.add_argument("--force", action="store_true", help="无视现成的，重新下")
+    e = sub.add_parser("ensure", help="确保本地有二进制（默认取 release latest）")
+    e.add_argument("--force", action="store_true", help="无视缓存，重下一份最新的")
+    e.add_argument("--any", action="store_true", help="不挑版本，手上有什么用什么")
     e.add_argument("--quiet", action="store_true")
 
     s = sub.add_parser("serve", help="起服务并等到能访问")
     s.add_argument("--port", type=int, help="端口，默认随机挑一个空闲的")
     s.add_argument("--wait", type=int, default=60, help="等多久算超时（秒）")
     s.add_argument("--keep", action="store_true", help="退出后不自动停（默认由调用方决定）")
+    s.add_argument("--any", action="store_true", help="不挑版本，手上有什么用什么")
     s.add_argument("--json", action="store_true", help="只打印 JSON，给脚本用")
 
     sub.add_parser("status", help="看服务状态")
@@ -497,14 +629,20 @@ def main() -> None:
     if a.cmd == "which":
         p = find_bin()
         print(p or "")
+        if p:
+            v = bin_version(p)
+            tag = release_meta().get("tag", "")
+            if v:
+                print(f"[i] 版本 {v}" + (f"，latest 是 {tag}" + ("（对得上）" if v == tag else "（不对外，会改用 latest）") if tag else ""),
+                      file=sys.stderr)
         return
 
     if a.cmd == "ensure":
-        print(ensure(quiet=a.quiet, force=a.force))
+        print(ensure(quiet=a.quiet, force=a.force, any_version=a.any))
         return
 
     if a.cmd == "serve":
-        info = serve(a.port, a.wait, a.keep)
+        info = serve(a.port, a.wait, a.keep, any_version=a.any)
         if a.json:
             print(json.dumps(info, ensure_ascii=False))
         else:
