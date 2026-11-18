@@ -222,6 +222,7 @@ Go 语言写的，网易云、QQ、酷狗、酷我、咪咕、汽水，一个都
 | 渲染 `x264 malloc failed` | 内存不够，切片已加 `-threads 2`；降低输出分辨率 |
 | 中文变方块 | 系统缺 `Microsoft YaHei`；换 `subtitle.font` |
 | 音乐站连不上 | 不用管：会自动拉本地 music-dl 起临时实例。要强制不装就 `--no-local`，改用 `--file` 或 `--bgm off` |
+| 音乐站起来了但 `/music/` 一直 404 | PATH 上的 `music-dl` 可能是老的 TUI 版：`web` 只有 `-p`，页面挂在 `/`、没有 `/music/api/*`。`musicdl.py` 会先 `web --help` 探参数，起不来自动换官方 release（缓存在 `%LOCALAPPDATA%\rec2video\music-dl`）；也可 `MUSIC_DL_BIN` 直接指官方版 |
 | 取 BGM 报 `400 Missing params` | `MUSIC_BASE` 指向 `<host>/music`；单曲下载必须带 `source`（`bgm.py get <id> <out> --source netease`），编排器会自动从搜索结果里带 |
 | 取 BGM 报 `502` / `未知音源` | 那首歌的直链拿不到或源不支持，换一首或换 `--source`（网易云 `netease`、QQ `qq`、酷狗 `kugou`、酷我 `kuwo`） |
 | 下 music-dl 很慢 / 卡在几 MB | 走代理时单连接可能只有十几 KB/s，脚本会切 4 段并发并整轮重试。实在下不动就手动下 release 里的 `go-music-dl_<平台>_<架构>`，解出可执行文件后用 `MUSIC_DL_BIN` 指过去 |

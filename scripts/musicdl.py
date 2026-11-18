@@ -361,8 +361,65 @@ def alive(pid: int) -> bool:
         return False
 
 
+def web_args(exe: Path, port: int) -> list[str]:
+    """拼 `music-dl web` 的参数。
+
+    老版本（如 v1.3.1 TUI 版）只有 `-p`，硬塞 `--no-browser` 会直接报
+    `unknown flag` 起不来，所以先问一次 `web --help` 再决定。
+    """
+    try:
+        out = subprocess.run([str(exe), "web", "--help"], capture_output=True,
+                             text=True, errors="replace", timeout=20)
+        help_text = (out.stdout or "") + (out.stderr or "")
+    except Exception:  # noqa: BLE001  问不到就按保守参数来
+        help_text = ""
+    flags = ["-p", str(port)]
+    if "no-browser" in help_text:
+        flags.insert(0, "--no-browser")   # 免得每次起服务弹一个浏览器窗口
+    return ["web", *flags]
+
+
+def _spawn(exe: Path, port: int, workdir: Path) -> subprocess.Popen:
+    log = open(workdir / LOG, "ab", buffering=0)
+    kwargs: dict = {"cwd": str(workdir), "stdout": log, "stderr": log,
+                    "stdin": subprocess.DEVNULL}
+    if os.name == "nt":
+        kwargs["creationflags"] = 0x00000200 | 0x08000000  # NEW_PROCESS_GROUP | NO_WINDOW
+    else:
+        kwargs["start_new_session"] = True
+    return subprocess.Popen([str(exe), *web_args(exe, port)], **kwargs)
+
+
+def _await(proc: subprocess.Popen, port: int, wait: int, workdir: Path) -> tuple[bool, str]:
+    """等 /music/ 能访问。返回 (成没成, 原因)。"""
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        if proc.poll() is not None:
+            tail = (workdir / LOG).read_text(encoding="utf-8", errors="replace")[-400:]
+            return False, f"进程退出（码 {proc.returncode}）：{tail.strip()[-200:]}"
+        if is_up(port):
+            return True, ""
+        time.sleep(0.5)
+    return False, f"{wait}s 内 /music/ 一直不通"
+
+
+def _kill(proc: subprocess.Popen) -> None:
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                           capture_output=True, text=True, errors="replace")
+        else:
+            proc.terminate()
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def serve(port: int | None = None, wait: int = 60, keep: bool = False) -> dict:
-    """起一个本地 web 服务；已经有活的就直接复用。"""
+    """起一个本地 web 服务；已经有活的就直接复用。
+
+    先试手上那个可执行文件；如果它起来但 `/music/` 404（比如 PATH 上是
+    老的 TUI 版，页面挂在 `/`、没有 `/music/api/*`），就换官方 release 再试一次。
+    """
     st = read_state()
     if st.get("pid") and st.get("port") and alive(int(st["pid"])) and is_up(int(st["port"])):
         return {"base": st["base"], "port": int(st["port"]), "pid": int(st["pid"]), "reused": True}
@@ -371,27 +428,30 @@ def serve(port: int | None = None, wait: int = 60, keep: bool = False) -> dict:
     port = port or free_port()
     d = cache_dir()
     d.mkdir(parents=True, exist_ok=True)
-    log = open(d / LOG, "ab", buffering=0)
-    kwargs: dict = {"cwd": str(d), "stdout": log, "stderr": log, "stdin": subprocess.DEVNULL}
-    if os.name == "nt":
-        kwargs["creationflags"] = 0x00000200 | 0x08000000  # NEW_PROCESS_GROUP | NO_WINDOW
-    else:
-        kwargs["start_new_session"] = True
-    proc = subprocess.Popen([str(exe), "web", "--no-browser", "-p", str(port)], **kwargs)
 
-    deadline = time.time() + wait
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            tail = (d / LOG).read_text(encoding="utf-8", errors="replace")[-600:]
-            raise SystemExit(f"[!] music-dl web 起不来（退出码 {proc.returncode}）：\n{tail}")
-        if is_up(port):
-            base = f"http://127.0.0.1:{port}/music"
-            state = {"base": base, "port": port, "pid": proc.pid,
-                     "started": time.strftime("%Y-%m-%d %H:%M:%S"), "keep": keep}
-            (d / STATE).write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
-            return {**state, "reused": False}
-        time.sleep(0.5)
-    raise SystemExit(f"[!] 等了 {wait}s 服务还没起来，看日志：{d / LOG}")
+    proc = _spawn(exe, port, d)
+    ok, why = _await(proc, port, min(wait, 15), d)      # 先给 15s，接口不兼容时别干等
+    if not ok:
+        _kill(proc)
+        official = cached_bin()
+        if exe.resolve() != official.resolve():
+            if official.is_file():            # 缓存里已有官方版，别重下
+                exe = official
+                print(f"[!] {exe.name} 接口对不上（{why}），换缓存的官方版再试", flush=True)
+            else:
+                print(f"[!] {exe.name} 接口对不上（{why}），下个官方 release 再试", flush=True)
+                exe = ensure(force=True)
+            proc = _spawn(exe, port, d)
+            ok, why = _await(proc, port, wait, d)
+    if not ok:
+        _kill(proc)
+        raise SystemExit(f"[!] music-dl web 起不来：{why}\n    日志：{d / LOG}")
+
+    base = f"http://127.0.0.1:{port}/music"
+    state = {"base": base, "port": port, "pid": proc.pid,
+             "started": time.strftime("%Y-%m-%d %H:%M:%S"), "keep": keep}
+    (d / STATE).write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
+    return {**state, "reused": False}
 
 
 def stop() -> bool:

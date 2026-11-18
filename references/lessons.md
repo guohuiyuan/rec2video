@@ -77,6 +77,7 @@ frame_x = (src_x - crop_x) * frame_w / crop_w
 1. **下载单曲必须带 `source`。** `music-dl` 的 `/music/download` 是 `id` + `source` 双参数，缺一个直接 `400 Missing params`；搜索能出结果不代表能下。`bgm.py` 现在从搜索结果里把 `source` 带过去，手工下也要记得加：`get <id> <out> --source netease`。
 2. **`MUSIC_BASE` 要指到 `…/music`。** `music-dl web -p 8080` 的服务根路径是 `/music`，少这一段会拿到 404 的 HTML。
 3. **不要假设用户先起了服务。** 没服务时脚本会下官方 release 的可执行文件、起一个只听 `127.0.0.1` 的临时实例，用完关掉——但它要下 ~13 MB，走代理可能只有十几 KB/s，所以要并发分片 + 整轮重试。离线场景用 `--no-local` 直说不行，别在那儿干等。
+4. **PATH 上那个 `music-dl` 可能不是同一代。** 老版本（如 v1.3.1 TUI 版）`web` 只有 `-p`，硬塞 `--no-browser` 直接 `unknown flag` 起不来；就算起来了，页面挂在 `/`、没有 `/music/api/*`，探测 `/music/` 会一直 404。现在的做法：先问一次 `web --help` 决定要不要加 `--no-browser`；起不来回退到官方 release（缓存里有就直接用，别重下 13 MB）。手工排障就一条命令看它到底认不认：`music-dl web --help`。
 
 ## 九、改文案是「重配 + 重切 + 重渲」，不是只重渲
 
