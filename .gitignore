@@ -15,3 +15,8 @@ __pycache__/
 # 系统
 .DS_Store
 Thumbs.db
+
+# 单次工程的产物（录屏、切片、成片、封面中间文件）
+/work/
+/src/
+.build/
