@@ -611,6 +611,7 @@ def cmd_cover(a) -> None:
     tool("cover.py", "render", specs[0], "-o", outdir, "-s", a.sizes, py=py)
     say(f"\n[+] 封面在 {outdir}（改 spec.json 里的文案再 render 一次即可）")
     say("    标题/简介套句式和封面数字保持一致，别抄参考视频的 star 数")
+    say("    简介三行给全：首句 / 干货 / 5–8 个话题标签（必带 #GitHub，SKILL.md 3.5）")
 
 
 # ---------------------------------------------------------------- CLI
