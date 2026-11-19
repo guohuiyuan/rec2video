@@ -20,3 +20,6 @@ Thumbs.db
 /work/
 /src/
 .build/
+
+# WorkBuddy 工作区数据（会话记忆、临时文件）
+.workbuddy/
