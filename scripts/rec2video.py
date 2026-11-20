@@ -11,8 +11,8 @@
 子命令
     doctor   体检环境（ffmpeg / 配音 CLI / BGM 站 / 封面引擎）
     new      建工程：探测录屏、抽带时间戳联系表、写 project.json 预设
-    script   把 txt 文案（一行一段）灌进 project.json，并验首句有没有复述标题
-    hook     只验这一条：首句复述发布标题（title / 项目名 / 数字 / 字面重合）
+    script   把 txt 文案（一行一段）灌进 project.json，并验首句是不是标题原句
+    hook     只验这一条：首句就是发布标题（title / 字面重合≥85% / 数字全落 / 项目名）
     info     看录屏参数 + 抽帧
     tts      配音 + 时间轴
     subs     只重出字幕（ass 烧录版 + srt 外挂版）
@@ -54,7 +54,7 @@ for _s in (sys.stdout, sys.stderr):
 
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-import hookcheck  # noqa: E402  同目录的「首句有没有复述标题」校验
+import hookcheck  # noqa: E402  同目录的「首句是不是标题原句」校验
 
 
 # ---------------------------------------------------------------- 小工具
@@ -313,10 +313,10 @@ def cmd_new(a) -> None:
         f"配音 {a.voice}  模式 {proj['mode']}")
     say(f"    联系表 {out_dir / 'scan'}（每格烧了原片绝对时间，先看它）")
     if not proj["segments"]:
-        say("\n下一步：**先把发布标题写进 title**（口播第一段要复述它），再写文案")
+        say("\n下一步：**先把发布标题写进 title**（口播第一段就是它本身，照抄），再写文案")
         say(f"    python scripts/rec2video.py script {pj} narration.txt --title \"好家伙！...\"")
     if not proj.get("title"):
-        say("    [!] title 还空着：没有标题，首句复述就没法校验（script / hook 会报 ✗）")
+        say("    [!] title 还空着：没有标题，首句照念就没法校验（script / hook 会报 ✗）")
     say(f"    python scripts/rec2video.py build  {pj}")
 
 
@@ -336,15 +336,16 @@ def cmd_script(a) -> None:
 
 
 def report_hook(proj: dict, pj: Path | None = None, title: str | None = None) -> bool:
-    """当场验一遍：第一句有没有复述发布标题。"""
+    """当场验一遍：第一句是不是发布标题原句。"""
     res = hookcheck.check(proj, title)
     say("")
-    say("文案  首句复述标题")
+    say("文案  首句 = 标题")
     for line in hookcheck.render(res):
         say(line)
     if not res["ok"]:
-        tip = ("      → 先把发布标题写进 project.json 的 title（或 script --title），首句再复述它"
-               if not res["title"] else "      → 改第一段，别往下配")
+        tip = ("      → 先把发布标题写进 project.json 的 title（或 script --title），首句照抄它"
+               if not res["title"]
+               else "      → 把标题原句整句抄进 narration.txt 第 1 行（句首只加 [笑]），别改写")
         say(tip)
     return bool(res["ok"])
 
@@ -631,7 +632,7 @@ def main() -> None:
     n.add_argument("-d", "--dir", help="工程目录（默认 ./<录屏名>）")
     n.add_argument("--name", help="工程名，也是成片文件名")
     n.add_argument("--repo", help="GitHub 仓库地址（填片尾标版 + 封面）")
-    n.add_argument("--title", help="发布标题原文（口播第一段要复述它，先定标题再写文案）")
+    n.add_argument("--title", help="发布标题原文（口播第一段照抄它，一字不改；先定标题再写文案）")
     n.add_argument("--voice", default="voice-120", help="音色 slug，默认 voice-120（大肥鱼）")
     n.add_argument("--script", help="文案 txt（一行一段），建工程时一起灌进去")
     n.add_argument("--force", action="store_true")
@@ -643,7 +644,7 @@ def main() -> None:
     s.add_argument("--title", help="顺手把发布标题写进 project.json 的 title")
     s.set_defaults(func=cmd_script)
 
-    hk = sub.add_parser("hook", help="查首句有没有复述发布标题")
+    hk = sub.add_parser("hook", help="查首句是不是发布标题原句")
     hk.add_argument("project")
     hk.add_argument("--title", help="临时给一个标题（不写回 project.json）")
     hk.set_defaults(func=cmd_hook)
