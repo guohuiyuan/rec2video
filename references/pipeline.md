@@ -53,15 +53,14 @@ gradients=...[bg0]
 ## 5. 声音
 
 ```
-BGM:  volume=0.26, afade in 1.8s / out 2.6s
-人声: volume=+6dB, split → 一路混音、一路当侧链触发
-      [bgm][vosc] sidechaincompress=threshold=0.035:ratio=8:attack=12:release=380
+BGM:  volume=0.12, afade in 1.8s / out 2.6s（默认 duck=false，直接与人声平稳混音）
+人声: volume=+6dB
 点击音: sfx.wav, 与 zooms 同时间点
       amix(inputs=3, normalize=0) → alimiter=limit=0.97
 ```
 
 - **`normalize=0` 很关键**：默认 amix 会把每路除以输入数，人声会被压到 1/3。
-- 侧链闪避让人声一出 BGM 自动躲开，`release=380` 偏长一点更自然（不会"抽气"）。
+- 默认不做侧链闪避（`duck: false`）：普通纯音乐直接压低到 `volume=0.12`（约在人声下方 12–15 dB）平稳铺底，避免人声停顿时 BGM 忽大忽小产生「抽气」感；如确实需要可在 `project.json` 显式设 `bgm.duck=true`。
 - `alimiter=limit=0.97` 兜底防削波。成片整体响度落在 −14 LUFS 左右，符合视频平台习惯。
 - 点击音效是合成的：噪声一阶差分（高通瞬态）+ 2100Hz/1080Hz 两个短衰减音 + 155Hz 低频 thump，总长 60ms。太纯会像"叮"，没有噪声瞬态会像"咚"。
 

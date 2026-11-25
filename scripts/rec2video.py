@@ -3,7 +3,7 @@
 """rec2video — 一段录屏 → 一条能发布的介绍片。
 
 一条命令串起整条流水线：体检录屏 → 按文案配音 → 按旁白时长反剪画面 →
-点击推镜与音效 → 中文字幕 → BGM 闪避混音 → 多尺寸封面。
+点击推镜与音效 → 中文字幕 → BGM 混音 → 多尺寸封面。
 
     python scripts/rec2video.py new   ~/Videos/demo.mp4 --repo https://github.com/you/proj
     python scripts/rec2video.py build demo/project.json
@@ -292,7 +292,7 @@ def cmd_new(a) -> None:
         "caption": {"start": "", "end": "", "start_at": 0.3, "start_until": 4.4,
                     "end_at": 0},
         "subtitle": {"font": "Microsoft YaHei", "size": 46, "margin_v": 46},
-        "bgm": {"src": "", "volume": 0.26, "duck": True},
+        "bgm": {"src": "", "volume": 0.12, "duck": False},
         "output": {"w": W, "h": H, "fps": 30, "crf": 19, "supersample": 2},
     }
     meta = gh_meta(a.repo) if a.repo else None
@@ -504,8 +504,9 @@ def cmd_bgm(a) -> None:
 
     proj["bgm"]["src"] = "assets/bgm.mp3"
     proj["bgm"]["volume"] = a.volume
+    proj["bgm"]["duck"] = False
     save(pj, proj)
-    say(f"[+] BGM ← {via}；写进 {pj.name}：assets/bgm.mp3 volume={a.volume} duck=True")
+    say(f"[+] BGM ← {via}；写进 {pj.name}：assets/bgm.mp3 volume={a.volume} duck=False")
 
 
 def cmd_build(a) -> None:
@@ -530,12 +531,12 @@ def cmd_build(a) -> None:
             save(pj, proj)
     elif a.bgm_file:
         cmd_bgm(argparse.Namespace(project=str(pj), q=None, pick=None, off=False,
-                                   file=a.bgm_file, volume=0.26, source="netease",
+                                   file=a.bgm_file, volume=0.12, source="netease",
                                    base=None, no_local=False))
     elif not have_bgm:
         try:
             cmd_bgm(argparse.Namespace(project=str(pj), q=None, pick=None, off=False,
-                                       file=None, volume=0.26, source="netease",
+                                       file=None, volume=0.12, source="netease",
                                        base=None, no_local=getattr(a, "no_local", False)))
         except SystemExit as exc:
             if exc.code:
@@ -689,7 +690,7 @@ def main() -> None:
                    help="音乐站连不上时不要现场拉 music-dl（默认会去 GitHub release 下）")
     b.add_argument("--file", help="用本地曲子（最省事）")
     b.add_argument("--off", action="store_true", help="关掉 BGM")
-    b.add_argument("--volume", type=float, default=0.26)
+    b.add_argument("--volume", type=float, default=0.12)
     b.set_defaults(func=cmd_bgm)
 
     d = sub.add_parser("build", help="配音 → 反剪 → 配乐 → 渲染")

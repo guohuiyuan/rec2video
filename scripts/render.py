@@ -567,17 +567,18 @@ def stage_render(pr: Project, preview: float | None = None, bgm: Path | None = N
     vo_gain = float(pr.get("voice", "gain_db", default=6))
     a_parts = []
     if bgm_idx is not None:
-        bvol = float(pr.get("bgm", "volume", default=0.26))
-        duck = pr.get("bgm", "duck", default=True)
+        bvol = float(pr.get("bgm", "volume", default=0.12))
+        duck = bool(pr.get("bgm", "duck", default=False))
         a_parts.append(f"[{bgm_idx}:a]aresample=48000,atrim=0:{total:.3f},asetpts=N/SR/TB,"
                        f"volume={bvol},afade=t=in:st=0:d=1.8,"
                        f"afade=t=out:st={max(total - 2.6, 0):.3f}:d=2.6[bgm]")
-        a_parts.append(f"[1:a]volume={vo_gain}dB,asplit=2[vomix][vosc]")
         if duck:
+            a_parts.append(f"[1:a]volume={vo_gain}dB,asplit=2[vomix][vosc]")
             a_parts.append("[bgm][vosc]sidechaincompress=threshold=0.035:ratio=8:"
                            "attack=12:release=380:makeup=1[duck]")
             mix_in = "[vomix][duck]"
         else:
+            a_parts.append(f"[1:a]volume={vo_gain}dB[vomix]")
             mix_in = "[vomix][bgm]"
     else:
         a_parts.append(f"[1:a]volume={vo_gain}dB[vomix]")
@@ -663,7 +664,7 @@ SKELETON = {
     "caption": {"start": "项目名 ｜ 一句话定位", "end": "github.com/owner/repo ｜ ★ 0",
                 "start_at": 0.3, "start_until": 4.4},
     "subtitle": {"font": "Microsoft YaHei", "size": 46, "margin_v": 46},
-    "bgm": {"src": "", "volume": 0.26, "duck": True},
+    "bgm": {"src": "", "volume": 0.12, "duck": False},
     "output": {"w": 1920, "h": 1080, "fps": 30, "crf": 19, "supersample": 2},
 }
 
