@@ -214,13 +214,13 @@ def cmd_plan(a) -> None:
         print(f"    {s.get('sub', '')[:30]:<32} 需 {r['max'] - 1.5:.2f}s")
 
 
-def _cut_key(at: float, want: float, vf: str, fps) -> str:
-    """切片缓存键：取材点 / 时长 / 裁切 / 帧率任一变化都算新切片。
+def _cut_key(src: Path, at: float, want: float, vf: str, fps) -> str:
+    """切片缓存键：源视频 / 取材点 / 时长 / 裁切 / 帧率任一变化都算新切片。
 
     只按文件名判断会复用「长度已经不对」的旧切片 —— 改完文案重跑 cut，
     报告说 58s，实际拼的还是 62s 的旧片子，成片 stretch 直接偏 6%。
     """
-    raw = f"{at:.3f}|{want:.3f}|{vf}|{fps}"
+    raw = f"{src.resolve()}|{at:.3f}|{want:.3f}|{vf}|{fps}"
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:8]
 
 
@@ -259,6 +259,7 @@ def cmd_cut(a) -> None:
     cuts.mkdir(parents=True, exist_ok=True)
     fps = plan.get("fps", 30)
     parts, total, warns = [], 0.0, []
+    info_cache: dict[Path, dict] = {src: info}
 
     print(f"{'段':>3}  {'取材':>16}  {'时长':>6}  说明")
     for i, (seg, ps) in enumerate(zip(segs, plan_segs), 1):
@@ -267,18 +268,43 @@ def cmd_cut(a) -> None:
         if cap and want > cap:
             warns.append(f"s{i:02d} 需要 {want:.2f}s，素材上限 {cap}s —— 已截到上限，旁白会挤")
             want = float(cap)
+
+        # 单段可指定外部成品源（如拼接渲染好的成片展示段），自动统一到主裁切分辨率与帧率
+        if ps.get("src"):
+            seg_src = Path(ps["src"]).expanduser()
+            if not seg_src.is_absolute():
+                seg_src = (base / seg_src).resolve()
+            if not seg_src.is_file():
+                die(f"s{i:02d} 找不到分段视频 {seg_src}")
+            if seg_src not in info_cache:
+                info_cache[seg_src] = ffprobe(seg_src)
+            seg_info = info_cache[seg_src]
+            sc = ps.get("crop", "")
+            if sc:
+                scw, sch, scx, scy = parse_crop(sc, seg_info)
+                seg_vf = f"crop={scw}:{sch}:{scx}:{scy},scale={cw}:{ch}"
+            else:
+                seg_vf = (f"scale={cw}:{ch}:force_original_aspect_ratio=decrease,"
+                          f"pad={cw}:{ch}:(ow-iw)/2:(oh-ih)/2:black")
+        else:
+            seg_src, seg_info, seg_vf = src, info, vf
+
         at = float(ps["at"])
         b = at + want
-        if b > info["duration"]:
-            warns.append(f"s{i:02d} 取材越界 {at:.2f}→{b:.2f}s，源只有 {info['duration']:.2f}s")
-            b = info["duration"]
+        if b > seg_info["duration"]:
+            warns.append(f"s{i:02d} 取材越界 {at:.2f}→{b:.2f}s，源只有 {seg_info['duration']:.2f}s")
+            b = seg_info["duration"]
             want = b - at
-        out = cuts / f"s{i:02d}_{_cut_key(at, want, vf, fps)}.mp4"
+        out = cuts / f"s{i:02d}_{_cut_key(seg_src, at, want, seg_vf, fps)}.mp4"
         if not out.is_file() or a.force:
+            # 统一成 yuv420p + limited(tv) 范围，防止不同源（如 yuvj420p/pc）concat 后让下游 zoompan 卡帧
+            norm_vf = f"{seg_vf},scale=in_range=auto:out_range=tv,format=yuv420p"
             p = run(["ffmpeg", "-hide_banner", "-v", "error", "-y",
-                     "-ss", f"{at}", "-to", f"{b}", "-i", str(src), "-an",
-                     "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-                     "-threads", "2", "-pix_fmt", "yuv420p", "-r", str(fps), str(out)])
+                     "-ss", f"{at}", "-to", f"{b}", "-i", str(seg_src), "-an",
+                     "-vf", norm_vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+                     "-threads", "2", "-pix_fmt", "yuv420p", "-color_range", "tv",
+                     "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709",
+                     "-r", str(fps), str(out)])
             if p.returncode != 0:
                 die(f"s{i:02d} 切片失败\n{p.stderr[-800:]}")
         parts.append(out)
